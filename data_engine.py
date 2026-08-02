@@ -8,7 +8,6 @@ import pickle
 import hashlib
 import logging
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import (
     EXCHANGES, EXCHANGE_PRIORITY, CACHE_DIR, OHLCV_DIR,
     TIMEFRAME, LOOKBACK_DAYS, UNIVERSE, UNIVERSE_BY_EXCHANGE
@@ -109,7 +108,6 @@ class DataEngine:
                 pairs = []
                 for symbol, market in markets.items():
                     if symbol.endswith('/USDT'):
-                        # Verificar que sea spot o derivado según el tipo
                         ex_type = EXCHANGES.get(ex_id, {}).get('type', 'spot')
                         if ex_type == 'spot' and not market.get('spot', False):
                             continue
@@ -119,7 +117,6 @@ class DataEngine:
                             continue
                         pairs.append(symbol)
                 
-                # Filtrar por volumen si es posible
                 if min_volume_usd > 0:
                     try:
                         tickers = exchange.fetch_tickers()
@@ -145,19 +142,17 @@ class DataEngine:
             except Exception as e:
                 logger.warning(f"Error obteniendo pares de {ex_id}: {e}")
         
-        # Intersección de todos los exchanges
         if all_pairs:
             common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
             common = sorted(list(common))[:max_pairs]
         else:
             common = self._fallback_pairs()
         
-        # Guardar por exchange
         self._universe_by_exchange = {ex_id: sorted(list(pairs & set(common))) 
                                       for ex_id, pairs in all_pairs.items()}
         self._universe_cache = common
         
-        # Actualizar config
+        # Actualizar variables globales de config
         global UNIVERSE, UNIVERSE_BY_EXCHANGE
         UNIVERSE = common
         UNIVERSE_BY_EXCHANGE = self._universe_by_exchange
@@ -188,7 +183,6 @@ class DataEngine:
         exchange = self.exchanges.get(ex_id)
         
         if exchange is None:
-            # Intentar con otro exchange
             for alt_id in EXCHANGE_PRIORITY:
                 if alt_id != ex_id and self.exchanges.get(alt_id) is not None:
                     exchange = self.exchanges[alt_id]
@@ -211,10 +205,8 @@ class DataEngine:
                 pass
         
         try:
-            # Normalizar símbolo para el exchange
             markets = exchange.load_markets()
             if symbol not in markets:
-                # Intentar encontrar el símbolo correcto
                 for sym, market in markets.items():
                     if sym == symbol or market.get('id') == symbol:
                         symbol = sym
@@ -245,7 +237,6 @@ class DataEngine:
         if exchange is None:
             return None
         
-        # Calcular límite
         if timeframe.endswith('m'):
             minutes = int(timeframe[:-1])
             candles_per_day = 1440 // minutes
