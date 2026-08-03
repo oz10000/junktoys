@@ -1,0 +1,36 @@
+name: 🧸 Mostrar Ranking en Consola
+
+on:
+  workflow_dispatch:          # Ejecución manual
+  schedule:
+    - cron: '0 */6 * * *'     # Cada 6 horas
+
+jobs:
+  ranking:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🐙 Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Instalar dependencias
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🧸 Ejecutar ranking
+        run: python scripts/console_ranking.py
+
+      - name: 📤 Subir logs (opcional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranking-logs
+          path: |
+            scripts/console_ranking.py
+            *.log
+          retention-days: 7
