@@ -42,6 +42,7 @@ class DataEngine:
         self._universe_cache = None
         self._universe_by_exchange = {}
         self._certified_assets = None
+        self._certified_assets_timestamp = None
 
         logger.info(f"✅ DataEngine listo. Primary: {self.primary}")
 
@@ -96,53 +97,71 @@ class DataEngine:
         Obtiene la lista de activos que han pasado la certificación mediante backtesting.
         Retorna solo los símbolos que cumplen los criterios de Win Rate, Profit Factor, etc.
         """
+        # Cache por 1 hora
         if not force_refresh and self._certified_assets is not None:
-            return self._certified_assets
+            if self._certified_assets_timestamp and (datetime.now() - self._certified_assets_timestamp).seconds < 3600:
+                logger.info(f"📦 Usando caché de certificación: {len(self._certified_assets)} activos")
+                return self._certified_assets
 
-        # Primero obtener el universo completo
+        # Obtener universo completo
         all_symbols = self.get_common_pairs(max_pairs=200, force_refresh=force_refresh)
+        logger.info(f"🔍 Evaluando {len(all_symbols)} activos para certificación...")
+
         certified = []
+        evaluated = 0
+        passed = 0
 
-        # Para cada símbolo, ejecutar un backtest rápido y evaluar criterios
-        from backtester import Backtester
-        from config import DEFAULT_PARAMS, INITIAL_CAPITAL
-
-        for sym in all_symbols[:50]:  # Limitamos para no saturar
+        for sym in all_symbols[:50]:  # Limitamos a 50 para velocidad
             try:
-                df = self.fetch_historical(sym, days=90)
+                logger.info(f"📊 Certificando {sym}...")
+                df = self.fetch_historical(sym, days=180)  # 180 días para más datos
                 if df is None or df.empty:
+                    logger.warning(f"⚠️ {sym}: sin datos históricos")
                     continue
 
                 # Backtest rápido con parámetros por defecto
+                from backtester import Backtester
+                from config import DEFAULT_PARAMS, INITIAL_CAPITAL
+
                 bt = Backtester({sym: df}, {'__global__': DEFAULT_PARAMS}, INITIAL_CAPITAL)
                 _, trades, _ = bt.run()
                 metrics = bt.calculate_metrics()
 
-                # Verificar criterios
                 win_rate = metrics.get('win_rate', 0)
                 profit_factor = metrics.get('profit_factor', 0)
                 max_dd = metrics.get('max_dd', 0)
                 n_trades = metrics.get('n_trades', 0)
 
-                if (win_rate >= CERTIFICATION_CRITERIA['min_win_rate'] and
+                evaluated += 1
+
+                # Criterios
+                criteria_ok = (
+                    win_rate >= CERTIFICATION_CRITERIA['min_win_rate'] and
                     profit_factor >= CERTIFICATION_CRITERIA['min_profit_factor'] and
                     abs(max_dd) <= CERTIFICATION_CRITERIA['max_drawdown'] and
-                    n_trades >= CERTIFICATION_CRITERIA['min_trades']):
+                    n_trades >= CERTIFICATION_CRITERIA['min_trades']
+                )
+
+                if criteria_ok:
                     certified.append(sym)
-                    logger.info(f"✅ {sym} certificado (WinRate: {win_rate:.2%}, PF: {profit_factor:.2f})")
+                    passed += 1
+                    logger.info(f"✅ {sym} CERTIFICADO (WR: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%}, Trades: {n_trades})")
                 else:
-                    logger.debug(f"❌ {sym} rechazado (WinRate: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%})")
+                    logger.info(f"❌ {sym} rechazado (WR: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%}, Trades: {n_trades})")
 
             except Exception as e:
                 logger.warning(f"Error certificando {sym}: {e}")
 
-        # Si no hay certificados, usar los de mayor volumen (fallback)
+        logger.info(f"📊 Certificación completada: {passed}/{evaluated} activos aprobados")
+
+        # Si no hay certificados, usar fallback
         if not certified:
             logger.warning("⚠️ No se encontraron activos certificados. Usando FALLBACK_SYMBOLS.")
             certified = FALLBACK_SYMBOLS[:20]
 
         self._certified_assets = certified
-        logger.info(f"✅ {len(certified)} activos certificados")
+        self._certified_assets_timestamp = datetime.now()
+        logger.info(f"✅ {len(certified)} activos en el universo operativo")
         return certified
 
     def get_common_pairs(self, min_volume_usd=0, max_pairs=500, force_refresh=False):
