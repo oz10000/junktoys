@@ -1,11 +1,12 @@
 # config.py
 import pytz
+import numpy as np
 
 # ============================================================
-# VERSIÓN Y PROYECTO
+# VERSIÓN
 # ============================================================
-VERSION = "6.0.0"
-PROJECT_NAME = "Junk Toys v6.0 — Laboratorio de Ejecución Manual Óptima"
+VERSION = "6.1.0"
+PROJECT_NAME = "Junk Toys v6.1 — Motor Multi-Exchange"
 
 # ============================================================
 # DATOS Y TIMEFRAMES
@@ -21,7 +22,57 @@ SLIPPAGE = 0.0005
 TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
 # ============================================================
-# FILTRO HORARIO
+# EXCHANGES APROBADOS (orden de prioridad)
+# ============================================================
+# Según verificación: OKX, KuCoin, MEXC, Kraken funcionan.
+# Bybit y Binance fallaron en GitHub Actions (se excluyen)
+EXCHANGE_PRIORITY = [
+    'okx',      # ✅ Funciona (swap)
+    'kucoin',   # ✅ Funciona (future)
+    'mexc',     # ✅ Funciona (future)
+    'kraken',   # ✅ Funciona (spot)
+    # 'bybit',  # ❌ Falló en GitHub (se mantiene como fallback opcional)
+    # 'binance',# ❌ Falló en GitHub
+]
+
+EXCHANGE_CONFIGS = {
+    'okx': {
+        'class': 'okx',
+        'options': {'defaultType': 'swap'},
+        'description': 'OKX Swap',
+    },
+    'kucoin': {
+        'class': 'kucoin',
+        'options': {'defaultType': 'future'},
+        'description': 'KuCoin Futures',
+    },
+    'mexc': {
+        'class': 'mexc',
+        'options': {'defaultType': 'future'},
+        'description': 'MEXC Futures',
+    },
+    'kraken': {
+        'class': 'kraken',
+        'options': {'defaultType': 'spot'},
+        'description': 'Kraken Spot',
+    },
+    # Fallbacks opcionales
+    'bybit': {
+        'class': 'bybit',
+        'options': {'defaultType': 'linear'},
+        'description': 'Bybit Linear (fallback)',
+        'enabled': False,
+    },
+    'binance': {
+        'class': 'binance',
+        'options': {'defaultType': 'future'},
+        'description': 'Binance Futures (fallback)',
+        'enabled': False,
+    },
+}
+
+# ============================================================
+# FILTRO HORARIO (Argentina)
 # ============================================================
 HOUR_FILTER_START = 10
 HOUR_FILTER_END = 17
@@ -35,32 +86,10 @@ UNIVERSE_BY_EXCHANGE = {}
 MAX_LEVERAGE_BY_ASSET = {}
 
 # ============================================================
-# EXCHANGES
-# ============================================================
-EXCHANGES = {
-    'binance': {'type': 'spot', 'priority': 1, 'enabled': True},
-    'bybit': {'type': 'linear', 'priority': 2, 'enabled': True},
-    'okx': {'type': 'swap', 'priority': 3, 'enabled': True},
-    'kraken': {'type': 'spot', 'priority': 4, 'enabled': True},
-    'kucoin': {'type': 'spot', 'priority': 5, 'enabled': True},
-    'bitget': {'type': 'swap', 'priority': 6, 'enabled': True},
-}
-
-EXCHANGE_PRIORITY = ['binance', 'bybit', 'okx', 'kraken', 'kucoin', 'bitget']
-
-# ============================================================
-# DIRECTORIOS DE CACHÉ
-# ============================================================
-CACHE_DIR = 'data/cache'
-OHLCV_DIR = 'data/ohlcv'
-RESULTS_DIR = 'data/results'
-WISE_DATA_DIR = 'data/wise'
-
-# ============================================================
 # PARÁMETROS POR DEFECTO
 # ============================================================
 DEFAULT_PARAMS = {
-    'min_score': 0.30,
+    'min_score': 0.32,
     'adx_threshold': 22,
     'ker_threshold': 0.42,
     'tp_mult': 2.5,
@@ -92,7 +121,7 @@ PARAM_RANGES = {
 }
 
 # ============================================================
-# SCORING
+# PESOS DEL SCORING AVANZADO
 # ============================================================
 SCORING_WEIGHTS = {
     'regime': 0.15,
@@ -109,14 +138,6 @@ SCORING_WEIGHTS = {
     'correlation': 0.04,
 }
 
-REGIME_SCORES = {
-    'Expansión': 1.0,
-    'Tendencia Fuerte': 0.9,
-    'Tendencia': 0.7,
-    'Normal': 0.5,
-    'Chop': 0.2,
-}
-
 # ============================================================
 # ZONAS DE ENTRADA
 # ============================================================
@@ -124,6 +145,17 @@ ENTRY_ZONES = {
     'A': {'pct': 0.002, 'desc': 'Muy cercana', 'aggressiveness': 0.3, 'color': '#4CAF50'},
     'B': {'pct': 0.010, 'desc': 'Moderada', 'aggressiveness': 0.6, 'color': '#FF9800'},
     'C': {'pct': 0.025, 'desc': 'Agresiva', 'aggressiveness': 0.9, 'color': '#F44336'},
+}
+
+# ============================================================
+# RÉGIMENES DE MERCADO
+# ============================================================
+REGIME_SCORES = {
+    'Expansión': 1.0,
+    'Tendencia Fuerte': 0.9,
+    'Tendencia': 0.7,
+    'Normal': 0.5,
+    'Chop': 0.2,
 }
 
 # ============================================================
@@ -136,7 +168,7 @@ BAYESIAN_INITIAL_POINTS = 20
 BAYESIAN_N_CALLS = 50
 
 # ============================================================
-# RIESGO
+# RIESGO Y APALANCAMIENTO
 # ============================================================
 MAX_LEVERAGE_GLOBAL = 10
 RISK_PER_TRADE = 0.02
@@ -159,7 +191,7 @@ AMPLITUDE_LOOKBACK = 100
 AMPLITUDE_BUCKETS = 10
 
 # ============================================================
-# EDGE
+# EDGE DETECTION
 # ============================================================
 EDGE_THRESHOLDS = {
     'maximo': 0.70,
@@ -167,13 +199,15 @@ EDGE_THRESHOLDS = {
     'minimo': 0.30,
 }
 
+# ============================================================
+# PROBABILIDAD Y CONFIANZA
+# ============================================================
 MIN_PROBABILITY = 0.55
 MIN_CONFIDENCE = 0.60
 
 # ============================================================
-# WISE
+# CACHÉ
 # ============================================================
-WISE_SUPPORTED_CURRENCIES = [
-    'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'CAD', 'NZD', 'SGD', 'JPY',
-    'BRL', 'MXN', 'COP', 'ARS', 'CLP', 'PEN', 'TRY', 'INR', 'CNY'
-]
+CACHE_DIR = 'data/cache'
+OHLCV_DIR = 'data/ohlcv'
+RESULTS_DIR = 'data/results'
