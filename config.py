@@ -1,15 +1,56 @@
 # config.py
 import pytz
-import numpy as np
 
 # ============================================================
-# VERSIÓN
+# VERSIÓN Y NOMBRE
 # ============================================================
-VERSION = "6.1.0"
-PROJECT_NAME = "Junk Toys v6.1 — Motor Multi-Exchange"
+VERSION = "6.2.0"
+PROJECT_NAME = "Junk Toys — Multi-Exchange (OKX/KuCoin/MEXC/Kraken)"
 
 # ============================================================
-# DATOS Y TIMEFRAMES
+# EXCHANGES QUE FUNCIONARON EN LA VERIFICACIÓN
+# ============================================================
+EXCHANGE_PRIORITY = [
+    'okx',      # ✅ Funciona (swap)
+    'kucoin',   # ✅ Funciona (future)
+    'mexc',     # ✅ Funciona (future)
+    'kraken',   # ✅ Funciona (spot)
+    # Bybit y Binance fallaron en GitHub Actions → se excluyen
+]
+
+EXCHANGE_CONFIGS = {
+    'okx': {
+        'class': 'okx',
+        'options': {'defaultType': 'swap'},
+        'description': 'OKX Swap',
+        'rate_limit': 50,
+        'timeframes': ['1m','3m','5m','15m','30m','1h','2h','4h','6h','12h','1d','2d','3d','1w','1M']
+    },
+    'kucoin': {
+        'class': 'kucoin',
+        'options': {'defaultType': 'future'},
+        'description': 'KuCoin Futures',
+        'rate_limit': 50,
+        'timeframes': ['1min','5min','15min','30min','1h','2h','4h','8h','12h','1d','1w']
+    },
+    'mexc': {
+        'class': 'mexc',
+        'options': {'defaultType': 'future'},
+        'description': 'MEXC Futures',
+        'rate_limit': 20,
+        'timeframes': ['Min1','Min5','Min15','Min30','Min60','Hour4','Hour8','Day1','Week1','Month1']
+    },
+    'kraken': {
+        'class': 'kraken',
+        'options': {'defaultType': 'spot'},
+        'description': 'Kraken Spot',
+        'rate_limit': 20,
+        'timeframes': ['1','5','15','30','60','240','1440','10080','21600']
+    }
+}
+
+# ============================================================
+# TIMEFRAME Y DATOS
 # ============================================================
 TIMEFRAME = '5m'
 TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
@@ -18,58 +59,7 @@ LOOKBACK_DAYS = 365
 INITIAL_CAPITAL = 10000.0
 COMMISSION = 0.0004
 SLIPPAGE = 0.0005
-
 TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
-
-# ============================================================
-# EXCHANGES APROBADOS (orden de prioridad)
-# ============================================================
-# Según verificación: OKX, KuCoin, MEXC, Kraken funcionan.
-# Bybit y Binance fallaron en GitHub Actions (se excluyen)
-EXCHANGE_PRIORITY = [
-    'okx',      # ✅ Funciona (swap)
-    'kucoin',   # ✅ Funciona (future)
-    'mexc',     # ✅ Funciona (future)
-    'kraken',   # ✅ Funciona (spot)
-    # 'bybit',  # ❌ Falló en GitHub (se mantiene como fallback opcional)
-    # 'binance',# ❌ Falló en GitHub
-]
-
-EXCHANGE_CONFIGS = {
-    'okx': {
-        'class': 'okx',
-        'options': {'defaultType': 'swap'},
-        'description': 'OKX Swap',
-    },
-    'kucoin': {
-        'class': 'kucoin',
-        'options': {'defaultType': 'future'},
-        'description': 'KuCoin Futures',
-    },
-    'mexc': {
-        'class': 'mexc',
-        'options': {'defaultType': 'future'},
-        'description': 'MEXC Futures',
-    },
-    'kraken': {
-        'class': 'kraken',
-        'options': {'defaultType': 'spot'},
-        'description': 'Kraken Spot',
-    },
-    # Fallbacks opcionales
-    'bybit': {
-        'class': 'bybit',
-        'options': {'defaultType': 'linear'},
-        'description': 'Bybit Linear (fallback)',
-        'enabled': False,
-    },
-    'binance': {
-        'class': 'binance',
-        'options': {'defaultType': 'future'},
-        'description': 'Binance Futures (fallback)',
-        'enabled': False,
-    },
-}
 
 # ============================================================
 # FILTRO HORARIO (Argentina)
@@ -79,14 +69,7 @@ HOUR_FILTER_END = 17
 USE_HOUR_FILTER = True
 
 # ============================================================
-# UNIVERSO (se llena automáticamente)
-# ============================================================
-UNIVERSE = []
-UNIVERSE_BY_EXCHANGE = {}
-MAX_LEVERAGE_BY_ASSET = {}
-
-# ============================================================
-# PARÁMETROS POR DEFECTO
+# PARÁMETROS GLOBALES OPTIMIZADOS (del informe)
 # ============================================================
 DEFAULT_PARAMS = {
     'min_score': 0.32,
@@ -104,38 +87,71 @@ DEFAULT_PARAMS = {
 }
 
 # ============================================================
-# RANGOS DE OPTIMIZACIÓN
+# PARÁMETROS POR ACTIVO (se aplican si el activo está en el universo)
 # ============================================================
-PARAM_RANGES = {
-    'sl_mult': (0.4, 2.5),
-    'tp_mult': (1.0, 5.0),
-    'trailing_distance': (0.002, 0.030),
-    'trailing_activation': (0.003, 0.050),
-    'trailing_callback': (0.001, 0.015),
-    'break_even_trigger': (0.002, 0.030),
-    'break_even_buffer': (0.001, 0.008),
-    'max_hold_minutes': (30, 300),
-    'min_score': (0.10, 0.60),
-    'adx_threshold': (15, 45),
-    'ker_threshold': (0.30, 0.75),
+ASSET_PARAMS = {
+    'BTC/USDT': {'min_score': 0.28, 'adx_threshold': 18, 'ker_threshold': 0.38, 'tp_mult': 2.8, 'sl_mult': 0.9, 'trailing_distance': 0.006, 'trailing_activation': 0.012, 'break_even_trigger': 0.008, 'leverage': 6},
+    'ETH/USDT': {'min_score': 0.30, 'adx_threshold': 20, 'ker_threshold': 0.40, 'tp_mult': 2.5, 'sl_mult': 1.0, 'trailing_distance': 0.007, 'trailing_activation': 0.014, 'break_even_trigger': 0.009, 'leverage': 5},
+    'SOL/USDT': {'min_score': 0.35, 'adx_threshold': 24, 'ker_threshold': 0.45, 'tp_mult': 2.2, 'sl_mult': 1.1, 'trailing_distance': 0.009, 'trailing_activation': 0.018, 'break_even_trigger': 0.012, 'leverage': 4},
+    'XRP/USDT': {'min_score': 0.32, 'adx_threshold': 22, 'ker_threshold': 0.42, 'tp_mult': 2.4, 'sl_mult': 1.0, 'trailing_distance': 0.008, 'trailing_activation': 0.016, 'break_even_trigger': 0.010, 'leverage': 4},
+    'BNB/USDT': {'min_score': 0.33, 'adx_threshold': 22, 'ker_threshold': 0.43, 'tp_mult': 2.3, 'sl_mult': 1.0, 'trailing_distance': 0.008, 'trailing_activation': 0.015, 'break_even_trigger': 0.010, 'leverage': 4},
+    'LINK/USDT': {'min_score': 0.34, 'adx_threshold': 23, 'ker_threshold': 0.44, 'tp_mult': 2.3, 'sl_mult': 1.0, 'trailing_distance': 0.008, 'trailing_activation': 0.016, 'break_even_trigger': 0.011, 'leverage': 4},
+    'ADA/USDT': {'min_score': 0.38, 'adx_threshold': 26, 'ker_threshold': 0.48, 'tp_mult': 2.0, 'sl_mult': 1.2, 'trailing_distance': 0.010, 'trailing_activation': 0.020, 'break_even_trigger': 0.014, 'leverage': 3},
+    'DOT/USDT': {'min_score': 0.36, 'adx_threshold': 25, 'ker_threshold': 0.46, 'tp_mult': 2.1, 'sl_mult': 1.1, 'trailing_distance': 0.009, 'trailing_activation': 0.018, 'break_even_trigger': 0.013, 'leverage': 3},
+    'AVAX/USDT': {'min_score': 0.40, 'adx_threshold': 28, 'ker_threshold': 0.50, 'tp_mult': 1.9, 'sl_mult': 1.2, 'trailing_distance': 0.012, 'trailing_activation': 0.022, 'break_even_trigger': 0.015, 'leverage': 3},
+    'DOGE/USDT': {'min_score': 0.42, 'adx_threshold': 30, 'ker_threshold': 0.52, 'tp_mult': 1.8, 'sl_mult': 1.3, 'trailing_distance': 0.014, 'trailing_activation': 0.025, 'break_even_trigger': 0.018, 'leverage': 2},
 }
 
 # ============================================================
-# PESOS DEL SCORING AVANZADO
+# RÉGIMEN Y FILTROS
+# ============================================================
+REGIME_FILTER = ['Tendencia Fuerte', 'Expansión', 'Tendencia']
+REGIME_SCORES = {
+    'Expansión': 1.0,
+    'Tendencia Fuerte': 0.9,
+    'Tendencia': 0.7,
+    'Normal': 0.5,
+    'Chop': 0.2,
+}
+
+# ============================================================
+# HORARIOS ÓPTIMOS (Argentina) — del informe
+# ============================================================
+OPTIMAL_HOURS = {
+    'best': [(5, 9)],
+    'good': [(1, 5), (9, 13)],
+    'caution': [(13, 17)],
+    'avoid': [(17, 21), (21, 1)],
+}
+OPTIMAL_DAYS = ['Tuesday', 'Wednesday']
+
+# ============================================================
+# KILL SWITCH
+# ============================================================
+KILL_SWITCH = {
+    'max_consecutive_losses': 3,
+    'max_daily_drawdown_pct': 0.05,
+    'max_weekly_drawdown_pct': 0.10,
+    'volatility_extreme_atr': 0.08,
+    'regime_chop_wait': 3,
+    'recovery_wait_hours': 1,
+    'recovery_reduce_position': 0.5,
+    'recovery_high_score_threshold': 0.50,
+    'recovery_top_assets': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
+}
+
+# ============================================================
+# SCORING WEIGHTS
 # ============================================================
 SCORING_WEIGHTS = {
-    'regime': 0.15,
-    'trend_quality': 0.15,
-    'volatility': 0.10,
-    'historical_winrate': 0.10,
-    'historical_profit_factor': 0.08,
+    'regime': 0.20,
+    'trend_quality': 0.20,
+    'volatility': 0.15,
+    'historical_winrate': 0.15,
+    'historical_profit_factor': 0.10,
     'expectancy': 0.08,
-    'risk': 0.08,
-    'statistical_quality': 0.06,
-    'microstructure': 0.06,
-    'support_resistance': 0.06,
-    'liquidity': 0.04,
-    'correlation': 0.04,
+    'risk': 0.07,
+    'statistical_quality': 0.05,
 }
 
 # ============================================================
@@ -148,65 +164,15 @@ ENTRY_ZONES = {
 }
 
 # ============================================================
-# RÉGIMENES DE MERCADO
+# WISE
 # ============================================================
-REGIME_SCORES = {
-    'Expansión': 1.0,
-    'Tendencia Fuerte': 0.9,
-    'Tendencia': 0.7,
-    'Normal': 0.5,
-    'Chop': 0.2,
-}
+WISE_SUPPORTED_CURRENCIES = [
+    'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'CAD', 'NZD', 'SGD', 'JPY',
+    'BRL', 'MXN', 'COP', 'ARS', 'CLP', 'PEN', 'TRY', 'INR', 'CNY'
+]
 
 # ============================================================
-# OPTIMIZACIÓN
-# ============================================================
-OPTIMIZATION_ITERATIONS = 100
-WALK_FORWARD_SPLITS = 5
-MONTE_CARLO_SIMULATIONS = 1000
-BAYESIAN_INITIAL_POINTS = 20
-BAYESIAN_N_CALLS = 50
-
-# ============================================================
-# RIESGO Y APALANCAMIENTO
-# ============================================================
-MAX_LEVERAGE_GLOBAL = 10
-RISK_PER_TRADE = 0.02
-MAX_POSITIONS = 3
-MAX_DAILY_LOSS_PCT = 0.08
-MIN_RISK_REWARD_RATIO = 1.5
-
-# ============================================================
-# SOPORTES Y RESISTENCIAS
-# ============================================================
-SR_WINDOW = 20
-SR_VOLUME_THRESHOLD = 1.5
-SR_CLUSTER_TOLERANCE = 0.005
-SR_MAX_LEVELS = 10
-
-# ============================================================
-# AMPLITUD
-# ============================================================
-AMPLITUDE_LOOKBACK = 100
-AMPLITUDE_BUCKETS = 10
-
-# ============================================================
-# EDGE DETECTION
-# ============================================================
-EDGE_THRESHOLDS = {
-    'maximo': 0.70,
-    'medio': 0.50,
-    'minimo': 0.30,
-}
-
-# ============================================================
-# PROBABILIDAD Y CONFIANZA
-# ============================================================
-MIN_PROBABILITY = 0.55
-MIN_CONFIDENCE = 0.60
-
-# ============================================================
-# CACHÉ
+# DIRECTORIOS
 # ============================================================
 CACHE_DIR = 'data/cache'
 OHLCV_DIR = 'data/ohlcv'
