@@ -19,22 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class DataEngine:
-    """
-    Motor multi-exchange con los exchanges que funcionaron en la verificación:
-    OKX → KuCoin → MEXC → Kraken.
-    El universo se construye automáticamente como la intersección de todos ellos.
-    NUNCA genera datos sintéticos.
-    """
-
     def __init__(self):
         os.makedirs(OHLCV_DIR, exist_ok=True)
         os.makedirs(CACHE_DIR, exist_ok=True)
 
         self.exchanges = {}
         self.exchange_status = {}
-        self.symbol_maps = {}
 
-        # Conectar a los exchanges habilitados
         for ex_id in EXCHANGE_PRIORITY:
             config = EXCHANGE_CONFIGS.get(ex_id)
             if not config:
@@ -53,7 +44,6 @@ class DataEngine:
             logger.info(f"✅ DataEngine listo. Primary: {self.primary}")
 
     def _connect_exchange(self, ex_id: str, config: dict):
-        """Conecta a un exchange con reintentos."""
         for attempt in range(3):
             try:
                 ex_class = getattr(ccxt, config['class'])
@@ -64,10 +54,7 @@ class DataEngine:
                 exchange.load_markets()
                 self.exchanges[ex_id] = exchange
                 self.exchange_status[ex_id] = 'connected'
-                self.symbol_maps[ex_id] = {
-                    m['symbol']: m for m in exchange.markets.values()
-                }
-                logger.info(f"✅ Conectado a {ex_id} ({config['description']})")
+                logger.info(f"✅ Conectado a {ex_id}")
                 return
             except Exception as e:
                 logger.warning(f"Intento {attempt+1}/3 para {ex_id} falló: {e}")
@@ -85,10 +72,6 @@ class DataEngine:
         return [ex_id for ex_id, ex in self.exchanges.items() if ex is not None]
 
     def get_common_pairs(self, min_volume_usd=200000, max_pairs=500, force_refresh=False) -> List[str]:
-        """
-        Construye el universo común a partir de la intersección de TODOS los exchanges conectados.
-        Si falla, retorna lista vacía (sin fallback).
-        """
         if not force_refresh and self._universe_cache is not None:
             return self._universe_cache
 
@@ -96,50 +79,36 @@ class DataEngine:
         for ex_id, exchange in self.exchanges.items():
             if exchange is None:
                 continue
-
             try:
                 logger.info(f"📊 Obteniendo pares de {ex_id}...")
                 markets = exchange.load_markets()
                 pairs = []
-                ex_type = EXCHANGE_CONFIGS.get(ex_id, {}).get('options', {}).get('defaultType', 'spot')
-
                 for symbol, market in markets.items():
-                    # Detectar pares USDT según el formato de cada exchange
+                    # Detectar USDT según el formato de cada exchange
                     is_usdt = False
-                    if ex_id == 'okx':
-                        if symbol.endswith('-USDT-SWAP') or '-USDT-' in symbol and 'SWAP' in symbol:
-                            is_usdt = True
-                    elif ex_id == 'kucoin':
-                        if symbol.endswith('USDTM') or symbol.endswith('USDT'):
-                            is_usdt = True
-                    elif ex_id == 'mexc':
-                        if symbol.endswith('_USDT') or symbol.endswith('USDT'):
-                            is_usdt = True
-                    elif ex_id == 'kraken':
-                        if symbol.endswith('/USDT'):
-                            is_usdt = True
-                    # Si se añaden otros exchanges, extender aquí
-
+                    if ex_id == 'okx' and ('-USDT-SWAP' in symbol or ('-USDT-' in symbol and 'SWAP' in symbol)):
+                        is_usdt = True
+                    elif ex_id == 'kucoin' and (symbol.endswith('USDTM') or symbol.endswith('USDT')):
+                        is_usdt = True
+                    elif ex_id == 'mexc' and (symbol.endswith('_USDT') or symbol.endswith('USDT')):
+                        is_usdt = True
+                    elif ex_id == 'kraken' and symbol.endswith('/USDT'):
+                        is_usdt = True
                     if not is_usdt:
                         continue
-
                     # Filtrar por tipo de mercado
                     if ex_id == 'okx' and not market.get('swap', False):
                         continue
-                    if ex_id == 'kucoin' and not market.get('future', False) and not market.get('swap', False):
-                        continue
-                    if ex_id == 'mexc' and not market.get('future', False):
+                    if ex_id in ('kucoin', 'mexc') and not market.get('future', False):
                         continue
                     if ex_id == 'kraken' and not market.get('spot', False):
                         continue
-
                     pairs.append(symbol)
-
-                # Filtrar por volumen
+                # Filtrar por volumen (opcional)
                 if min_volume_usd > 0:
                     try:
                         tickers = exchange.fetch_tickers()
-                        if tickers is not None:
+                        if tickers:
                             filtered = []
                             for sym in pairs:
                                 ticker = tickers.get(sym)
@@ -150,25 +119,20 @@ class DataEngine:
                             pairs = filtered
                     except Exception as e:
                         logger.warning(f"Error filtrando volumen en {ex_id}: {e}")
-
                 all_pairs[ex_id] = set(pairs)
                 logger.info(f"✅ {ex_id}: {len(pairs)} pares USDT")
-
             except Exception as e:
-                logger.error(f"Error obteniendo pares de {ex_id}: {e}")
+                logger.error(f"Error en {ex_id}: {e}")
 
         if not all_pairs:
             logger.error("❌ No se obtuvieron pares de ningún exchange")
             self._universe_cache = []
             return []
 
-        # Intersección de todos los exchanges
         common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
         common = sorted(list(common))[:max_pairs]
-
         self._universe_by_exchange = {ex_id: sorted(list(pairs & set(common))) for ex_id, pairs in all_pairs.items()}
         self._universe_cache = common
-
         logger.info(f"✅ Universo consolidado: {len(common)} pares comunes")
         return common
 
@@ -179,10 +143,6 @@ class DataEngine:
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = TIMEFRAME, limit: int = 300,
                     force_refresh: bool = False) -> Optional[pd.DataFrame]:
-        """
-        Intenta descargar velas de cada exchange en orden de prioridad hasta obtener datos.
-        NUNCA retorna datos sintéticos.
-        """
         for ex_id in EXCHANGE_PRIORITY:
             exchange = self.exchanges.get(ex_id)
             if exchange is None:
@@ -190,7 +150,6 @@ class DataEngine:
 
             cache_key = hashlib.md5(f"{symbol}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
             cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-
             if not force_refresh and os.path.exists(cache_path):
                 try:
                     with open(cache_path, 'rb') as f:
@@ -205,17 +164,13 @@ class DataEngine:
                 ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
                 if not ohlcv:
                     continue
-
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
-
                 with open(cache_path, 'wb') as f:
                     pickle.dump(df, f)
-
                 logger.info(f"✅ {len(df)} velas reales para {symbol} desde {ex_id}")
                 return df
-
             except Exception as e:
                 logger.warning(f"Error en {ex_id} para {symbol}: {e}")
                 continue
@@ -225,12 +180,10 @@ class DataEngine:
 
     def fetch_historical(self, symbol: str, timeframe: str = TIMEFRAME,
                          days: int = LOOKBACK_DAYS) -> Optional[pd.DataFrame]:
-        """Descarga histórico con paginación probando exchanges en orden."""
         for ex_id in EXCHANGE_PRIORITY:
             exchange = self.exchanges.get(ex_id)
             if exchange is None:
                 continue
-
             try:
                 if timeframe.endswith('m'):
                     minutes = int(timeframe[:-1])
@@ -238,25 +191,20 @@ class DataEngine:
                 else:
                     candles_per_day = 288
                 limit = days * candles_per_day + 100
-
                 since = exchange.parse8601((datetime.now() - timedelta(days=days)).isoformat())
                 ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
                 if not ohlcv:
                     continue
-
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df.set_index('timestamp', inplace=True)
-
                 cutoff = datetime.now() - timedelta(days=days)
                 df = df[df.index >= cutoff]
                 logger.info(f"✅ {len(df)} velas históricas para {symbol} desde {ex_id} ({days} días)")
                 return df
-
             except Exception as e:
-                logger.warning(f"Error en histórico {ex_id} para {symbol}: {e}")
+                logger.warning(f"Error en {ex_id} para histórico de {symbol}: {e}")
                 continue
-
         logger.error(f"❌ No se pudo obtener histórico de {symbol}")
         return None
 
