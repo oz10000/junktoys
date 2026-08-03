@@ -2,7 +2,6 @@
 # scripts/console_ranking.py
 import sys
 import os
-# Añadir la raíz del proyecto al PYTHONPATH
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time
@@ -21,9 +20,6 @@ from config import (
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# FUNCIONES DE FORMATO
-# ============================================================
 def print_header():
     print("="*80)
     print(f"  🧸 JUNK TOYS — RANKING EN CONSOLA v{VERSION}")
@@ -54,7 +50,7 @@ def print_best_trade(best):
 
 def print_ranking(items, title, emoji, top_n=10):
     print(f"{emoji} TOP {top_n} {title}")
-    # Rellenar hasta top_n
+    # Rellenar hasta top_n con None
     display_items = items[:top_n]
     while len(display_items) < top_n:
         display_items.append(None)
@@ -110,9 +106,6 @@ def print_summary(signals):
     print("="*80)
 
 def estimate_time_to_approval(signal):
-    """
-    Estima el tiempo hasta la aprobación basado en la distancia a los umbrales.
-    """
     params = ASSET_PARAMS.get(signal.symbol, DEFAULT_PARAMS)
     min_score = params.get('min_score', DEFAULT_PARAMS['min_score'])
     adx_threshold = params.get('adx_threshold', DEFAULT_PARAMS['adx_threshold'])
@@ -135,75 +128,78 @@ def estimate_time_to_approval(signal):
 
 def main():
     print_header()
+
+    # 1. Obtener universo
+    de = DataEngine()
+    universe = de.get_common_pairs()
+    if not universe:
+        print("⚠️ No se encontraron pares comunes. Usando lista de fallback.")
+        universe = FALLBACK_SYMBOLS
+
+    print(f"📊 Escaneando {len(universe)} activos...")
+    data_dict = {}
+
+    # 2. Descargar datos para cada símbolo
+    for sym in universe[:30]:
+        df = de.fetch_ohlcv(sym, limit=200)
+        if df is not None and not df.empty:
+            data_dict[sym] = df
+
+    # 3. Si no se obtuvieron datos reales, generar datos de muestra
+    if not data_dict:
+        print("❌ No se pudieron obtener datos reales. Generando datos de muestra...")
+        for sym in universe[:10]:
+            np.random.seed(42)
+            periods = 300
+            base_price = 50000 if 'BTC' in sym else 3000 if 'ETH' in sym else 100
+            trend = np.cumsum(np.random.randn(periods) * 0.001) + 1
+            close = base_price * trend
+            high = close * (1 + np.random.rand(periods) * 0.01)
+            low = close * (1 - np.random.rand(periods) * 0.01)
+            open_price = close * (1 + np.random.randn(periods) * 0.002)
+            volume = np.random.rand(periods) * 1000000
+            dates = pd.date_range(end=datetime.now(), periods=periods, freq='5min')
+            df = pd.DataFrame({
+                'open': open_price,
+                'high': high,
+                'low': low,
+                'close': close,
+                'volume': volume
+            }, index=dates)
+            data_dict[sym] = df
+            print(f"📌 Datos de muestra generados para {sym}")
+
+    # 4. Generar señales
+    signals = []
+    for sym, df in data_dict.items():
+        params = ASSET_PARAMS.get(sym, DEFAULT_PARAMS)
+        s = Signal(sym, df, params)
+        s.time_to_approval = estimate_time_to_approval(s)
+        signals.append(s)
+
+    # 5. Ordenar por confianza (aprobadas primero)
+    signals.sort(key=lambda x: (x.is_valid, x.confidence), reverse=True)
+
+    longs = [s for s in signals if s.direction == 'Long']
+    shorts = [s for s in signals if s.direction == 'Short']
+
+    # 6. Mostrar resultados
+    if signals:
+        best = signals[0]
+        print_best_trade(best)
+        print_ranking(longs, "LONG", "🟢", top_n=10)
+        print_ranking(shorts, "SHORT", "🔴", top_n=10)
+        print_summary(signals)
+    else:
+        print("⚠️ No hay señales (ni siquiera no aprobadas).")
+        print_ranking([], "LONG", "🟢", top_n=10)
+        print_ranking([], "SHORT", "🔴", top_n=10)
+
+if __name__ == '__main__':
     try:
-        de = DataEngine()
-        universe = de.get_common_pairs()
-        if not universe:
-            print("⚠️ No se encontraron pares comunes. Usando lista de fallback.")
-            universe = FALLBACK_SYMBOLS
-
-        print(f"📊 Escaneando {len(universe)} activos...")
-        data_dict = {}
-        for sym in universe[:30]:
-            df = de.fetch_ohlcv(sym, limit=200)
-            if df is not None and not df.empty:
-                data_dict[sym] = df
-
-        if not data_dict:
-            print("❌ No se pudieron obtener datos reales. Verifica conectividad.")
-            # Usar datos de muestra (para no fallar)
-            from data_engine import DataEngine
-            # Generar datos sintéticos para los primeros 10 símbolos
-            for sym in universe[:10]:
-                np.random.seed(42)
-                periods = 300
-                base_price = 50000 if 'BTC' in sym else 3000 if 'ETH' in sym else 100
-                trend = np.cumsum(np.random.randn(periods) * 0.001) + 1
-                close = base_price * trend
-                high = close * (1 + np.random.rand(periods) * 0.01)
-                low = close * (1 - np.random.rand(periods) * 0.01)
-                open_price = close * (1 + np.random.randn(periods) * 0.002)
-                volume = np.random.rand(periods) * 1000000
-                dates = pd.date_range(end=datetime.now(), periods=periods, freq='5min')
-                df = pd.DataFrame({
-                    'open': open_price,
-                    'high': high,
-                    'low': low,
-                    'close': close,
-                    'volume': volume
-                }, index=dates)
-                data_dict[sym] = df
-                print(f"📌 Datos de muestra generados para {sym}")
-
-        signals = []
-        for sym, df in data_dict.items():
-            params = ASSET_PARAMS.get(sym, DEFAULT_PARAMS)
-            s = Signal(sym, df, params)
-            s.time_to_approval = estimate_time_to_approval(s)
-            signals.append(s)
-
-        # Ordenar por confianza (las aprobadas primero)
-        signals.sort(key=lambda x: (x.is_valid, x.confidence), reverse=True)
-
-        longs = [s for s in signals if s.direction == 'Long']
-        shorts = [s for s in signals if s.direction == 'Short']
-
-        if signals:
-            best = signals[0]
-            print_best_trade(best)
-            print_ranking(longs, "LONG", "🟢", top_n=10)
-            print_ranking(shorts, "SHORT", "🔴", top_n=10)
-            print_summary(signals)
-        else:
-            print("⚠️ No hay señales (ni siquiera no aprobadas).")
-            print_ranking([], "LONG", "🟢", top_n=10)
-            print_ranking([], "SHORT", "🔴", top_n=10)
-
+        main()
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-if __name__ == '__main__':
-    main()
