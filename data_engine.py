@@ -7,22 +7,20 @@ import time
 import pickle
 import hashlib
 import logging
-import requests
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import (
     EXCHANGE_PRIORITY, EXCHANGE_CONFIGS, FALLBACK_SYMBOLS,
     CACHE_DIR, OHLCV_DIR, TIMEFRAME, LOOKBACK_DAYS,
-    SPECIAL_ASSETS
+    CERTIFICATION_CRITERIA
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class DataEngine:
-    """Motor de datos con soporte para múltiples exchanges + CoinGecko + Crypto.com + XAU"""
+    """Motor de datos con certificación de activos mediante backtesting"""
 
     def __init__(self, exchanges=None):
         os.makedirs(OHLCV_DIR, exist_ok=True)
@@ -43,11 +41,12 @@ class DataEngine:
         self._cache_timestamps = {}
         self._universe_cache = None
         self._universe_by_exchange = {}
+        self._certified_assets = None
 
         logger.info(f"✅ DataEngine listo. Primary: {self.primary}")
 
     def _connect_exchange(self, ex_id):
-        """Conecta a un exchange con reintentos y manejo de símbolos específicos"""
+        """Conecta a un exchange con reintentos"""
         for attempt in range(3):
             try:
                 ex_class = getattr(ccxt, ex_id)
@@ -92,12 +91,62 @@ class DataEngine:
     def get_available_exchanges(self):
         return [ex_id for ex_id, ex in self.exchanges.items() if ex is not None]
 
+    def get_certified_assets(self, force_refresh=False):
+        """
+        Obtiene la lista de activos que han pasado la certificación mediante backtesting.
+        Retorna solo los símbolos que cumplen los criterios de Win Rate, Profit Factor, etc.
+        """
+        if not force_refresh and self._certified_assets is not None:
+            return self._certified_assets
+
+        # Primero obtener el universo completo
+        all_symbols = self.get_common_pairs(max_pairs=200, force_refresh=force_refresh)
+        certified = []
+
+        # Para cada símbolo, ejecutar un backtest rápido y evaluar criterios
+        from backtester import Backtester
+        from config import DEFAULT_PARAMS, INITIAL_CAPITAL
+
+        for sym in all_symbols[:50]:  # Limitamos para no saturar
+            try:
+                df = self.fetch_historical(sym, days=90)
+                if df is None or df.empty:
+                    continue
+
+                # Backtest rápido con parámetros por defecto
+                bt = Backtester({sym: df}, {'__global__': DEFAULT_PARAMS}, INITIAL_CAPITAL)
+                _, trades, _ = bt.run()
+                metrics = bt.calculate_metrics()
+
+                # Verificar criterios
+                win_rate = metrics.get('win_rate', 0)
+                profit_factor = metrics.get('profit_factor', 0)
+                max_dd = metrics.get('max_dd', 0)
+                n_trades = metrics.get('n_trades', 0)
+
+                if (win_rate >= CERTIFICATION_CRITERIA['min_win_rate'] and
+                    profit_factor >= CERTIFICATION_CRITERIA['min_profit_factor'] and
+                    abs(max_dd) <= CERTIFICATION_CRITERIA['max_drawdown'] and
+                    n_trades >= CERTIFICATION_CRITERIA['min_trades']):
+                    certified.append(sym)
+                    logger.info(f"✅ {sym} certificado (WinRate: {win_rate:.2%}, PF: {profit_factor:.2f})")
+                else:
+                    logger.debug(f"❌ {sym} rechazado (WinRate: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%})")
+
+            except Exception as e:
+                logger.warning(f"Error certificando {sym}: {e}")
+
+        # Si no hay certificados, usar los de mayor volumen (fallback)
+        if not certified:
+            logger.warning("⚠️ No se encontraron activos certificados. Usando FALLBACK_SYMBOLS.")
+            certified = FALLBACK_SYMBOLS[:20]
+
+        self._certified_assets = certified
+        logger.info(f"✅ {len(certified)} activos certificados")
+        return certified
+
     def get_common_pairs(self, min_volume_usd=0, max_pairs=500, force_refresh=False):
-        """
-        Obtiene la intersección de pares USDT entre todos los exchanges.
-        Si la intersección es pequeña, usa los pares de Kraken o FALLBACK_SYMBOLS.
-        También añade activos especiales como XAU.
-        """
+        """Obtiene la intersección de pares USDT entre todos los exchanges."""
         if not force_refresh and self._universe_cache is not None:
             return self._universe_cache
 
@@ -118,7 +167,6 @@ class DataEngine:
                 for symbol, market in markets.items():
                     if not symbol.endswith('/USDT') and not symbol.endswith('USDT'):
                         continue
-                    # Verificar tipo de mercado
                     if ex_type == 'spot' and not market.get('spot', False):
                         continue
                     if ex_type == 'linear' and not market.get('linear', False):
@@ -152,27 +200,19 @@ class DataEngine:
             except Exception as e:
                 logger.warning(f"Error obteniendo pares de {ex_id}: {e}")
 
-        # Intersección
         if all_pairs:
             common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
             common = sorted(list(common))[:max_pairs]
         else:
             common = []
 
-        # Si la intersección es muy pequeña, usar Kraken o fallback
         if len(common) < 5 and 'kraken' in all_pairs:
             logger.warning("⚠️ Intersección pequeña. Usando pares de Kraken.")
             common = sorted(list(all_pairs.get('kraken', set())))[:max_pairs]
 
-        # Si sigue vacío, usar fallback
         if not common:
             logger.warning("⚠️ Intersección vacía. Usando FALLBACK_SYMBOLS.")
             common = FALLBACK_SYMBOLS[:max_pairs]
-
-        # Añadir activos especiales (XAU, etc.)
-        for special in SPECIAL_ASSETS.keys():
-            if special not in common:
-                common.append(special)
 
         self._universe_by_exchange = {ex_id: sorted(list(pairs & set(common)))
                                       for ex_id, pairs in all_pairs.items()}
@@ -181,11 +221,7 @@ class DataEngine:
         return common
 
     def fetch_ohlcv(self, symbol, timeframe=TIMEFRAME, limit=300, exchange_id=None, force_refresh=False):
-        """Descarga OHLCV con caché y soporte multi-exchange + CoinGecko/Crypto.com para XAU"""
-        # Verificar si es activo especial (XAU)
-        if symbol in SPECIAL_ASSETS:
-            return self._fetch_special_asset(symbol, timeframe, limit)
-
+        """Descarga OHLCV con caché y soporte multi-exchange."""
         ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
         exchange = self.exchanges.get(ex_id)
 
@@ -212,9 +248,7 @@ class DataEngine:
                 pass
 
         try:
-            # Normalizar símbolo según exchange
             markets = exchange.load_markets()
-            # Buscar el símbolo correcto
             actual_symbol = symbol
             if symbol not in markets:
                 for sym, market in markets.items():
@@ -233,132 +267,14 @@ class DataEngine:
             with open(cache_path, 'wb') as f:
                 pickle.dump(df, f)
 
-            logger.info(f"✅ {len(df)} velas reales para {symbol} desde {ex_id}")
+            logger.info(f"✅ {len(df)} velas para {symbol} desde {ex_id}")
             return df
 
         except Exception as e:
             logger.warning(f"Error en {ex_id} para {symbol}: {e}")
             return None
 
-    def _fetch_special_asset(self, symbol, timeframe, limit):
-        """Obtiene datos de activos especiales (XAU) desde CoinGecko o Crypto.com"""
-        cache_key = hashlib.md5(f"special_{symbol}_{timeframe}_{limit}".encode()).hexdigest()
-        cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'rb') as f:
-                    df = pickle.load(f)
-                if not df.empty:
-                    return df
-            except:
-                pass
-
-        if 'XAU' in symbol:
-            return self._fetch_xau(symbol, timeframe, limit)
-
-        return None
-
-    def _fetch_xau(self, symbol, timeframe, limit):
-        """Obtiene precio del Oro (XAU) desde CoinGecko y Crypto.com como fallback"""
-        df = None
-
-        # Intento 1: CoinGecko
-        try:
-            url = "https://api.coingecko.com/api/v3/simple/price"
-            params = {
-                'ids': 'gold',
-                'vs_currencies': 'usd',
-                'include_market_cap': 'true',
-                'include_24hr_vol': 'true',
-                'include_24hr_change': 'true'
-            }
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                if 'gold' in data and 'usd' in data['gold']:
-                    price = data['gold']['usd']
-                    # Construir DataFrame sintético con el precio actual
-                    now = datetime.now()
-                    # Generar velas de 5 minutos hacia atrás
-                    periods = limit
-                    dates = pd.date_range(end=now, periods=periods, freq='5min')
-                    # Simular pequeñas variaciones alrededor del precio
-                    np.random.seed(42)
-                    variations = np.random.randn(periods) * price * 0.001
-                    close = price + variations.cumsum()
-                    close = np.maximum(close, price * 0.95)  # No bajar más de 5%
-                    df = pd.DataFrame({
-                        'open': close * (1 + np.random.randn(periods) * 0.0005),
-                        'high': close * (1 + np.random.rand(periods) * 0.001),
-                        'low': close * (1 - np.random.rand(periods) * 0.001),
-                        'close': close,
-                        'volume': np.random.rand(periods) * 1000000
-                    }, index=dates)
-                    logger.info(f"✅ XAU/USD desde CoinGecko: precio ${price:.2f}")
-            else:
-                logger.warning(f"CoinGecko falló (status {resp.status_code})")
-        except Exception as e:
-            logger.warning(f"Error con CoinGecko: {e}")
-
-        # Intento 2: Crypto.com (fallback)
-        if df is None:
-            try:
-                url = "https://api.crypto.com/v2/public/get-ticker"
-                params = {'instrument_name': 'XAU_USDT'}
-                resp = requests.get(url, params=params, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get('code') == 0 and data.get('result'):
-                        ticker = data['result']['data'][0]
-                        price = float(ticker.get('b', 0))  # bid price
-                        if price > 0:
-                            now = datetime.now()
-                            periods = limit
-                            dates = pd.date_range(end=now, periods=periods, freq='5min')
-                            np.random.seed(42)
-                            variations = np.random.randn(periods) * price * 0.001
-                            close = price + variations.cumsum()
-                            close = np.maximum(close, price * 0.95)
-                            df = pd.DataFrame({
-                                'open': close * (1 + np.random.randn(periods) * 0.0005),
-                                'high': close * (1 + np.random.rand(periods) * 0.001),
-                                'low': close * (1 - np.random.rand(periods) * 0.001),
-                                'close': close,
-                                'volume': np.random.rand(periods) * 1000000
-                            }, index=dates)
-                            logger.info(f"✅ XAU/USDT desde Crypto.com: precio ${price:.2f}")
-            except Exception as e:
-                logger.warning(f"Error con Crypto.com: {e}")
-
-        if df is not None and not df.empty:
-            with open(cache_path, 'wb') as f:
-                pickle.dump(df, f)
-            return df
-
-        logger.warning(f"⚠️ No se pudo obtener XAU. Usando datos sintéticos.")
-        # Último recurso: datos sintéticos
-        now = datetime.now()
-        periods = limit
-        dates = pd.date_range(end=now, periods=periods, freq='5min')
-        price = 2650  # precio estimado del oro
-        np.random.seed(42)
-        variations = np.random.randn(periods) * price * 0.0005
-        close = price + variations.cumsum()
-        close = np.maximum(close, price * 0.96)
-        df = pd.DataFrame({
-            'open': close * (1 + np.random.randn(periods) * 0.0003),
-            'high': close * (1 + np.random.rand(periods) * 0.0008),
-            'low': close * (1 - np.random.rand(periods) * 0.0008),
-            'close': close,
-            'volume': np.random.rand(periods) * 500000
-        }, index=dates)
-        with open(cache_path, 'wb') as f:
-            pickle.dump(df, f)
-        return df
-
     def _get_best_exchange_for_symbol(self, symbol):
-        """Obtiene el mejor exchange para un símbolo"""
         if symbol in self._universe_by_exchange:
             for ex_id in EXCHANGE_PRIORITY:
                 if symbol in self._universe_by_exchange.get(ex_id, []):
@@ -366,11 +282,7 @@ class DataEngine:
         return self.primary
 
     def fetch_historical(self, symbol, timeframe=TIMEFRAME, days=LOOKBACK_DAYS, exchange_id=None):
-        """Descarga histórico completo"""
-        # Para XAU, usamos el método especial
-        if symbol in SPECIAL_ASSETS:
-            return self._fetch_special_asset(symbol, timeframe, limit=days * 288)
-
+        """Descarga histórico completo."""
         ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
         exchange = self.exchanges.get(ex_id)
         if exchange is None:
