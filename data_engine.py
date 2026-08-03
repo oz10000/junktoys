@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from config import (
-    EXCHANGE_PRIORITY, EXCHANGE_CONFIGS,
+    EXCHANGE_PRIORITY, EXCHANGE_CONFIGS, FALLBACK_SYMBOLS,
     CACHE_DIR, OHLCV_DIR, TIMEFRAME, LOOKBACK_DAYS
 )
 
@@ -83,28 +83,48 @@ class DataEngine:
                 logger.info(f"📊 Obteniendo pares de {ex_id}...")
                 markets = exchange.load_markets()
                 pairs = []
+
                 for symbol, market in markets.items():
-                    # Detectar USDT según el formato de cada exchange
                     is_usdt = False
-                    if ex_id == 'okx' and ('-USDT-SWAP' in symbol or ('-USDT-' in symbol and 'SWAP' in symbol)):
-                        is_usdt = True
-                    elif ex_id == 'kucoin' and (symbol.endswith('USDTM') or symbol.endswith('USDT')):
-                        is_usdt = True
-                    elif ex_id == 'mexc' and (symbol.endswith('_USDT') or symbol.endswith('USDT')):
-                        is_usdt = True
-                    elif ex_id == 'kraken' and symbol.endswith('/USDT'):
-                        is_usdt = True
+
+                    # Detectar USDT según el formato de cada exchange
+                    if ex_id == 'okx':
+                        # OKX swap: BTC-USDT-SWAP, ETH-USDT-SWAP, etc.
+                        if '-USDT-SWAP' in symbol or ('-USDT-' in symbol and 'SWAP' in symbol):
+                            is_usdt = True
+                    elif ex_id == 'kucoin':
+                        # KuCoin futures: XBTUSDTM, ETHUSDTM, SOLUSDTM, etc.
+                        if symbol.endswith('USDTM') or symbol.endswith('USDT'):
+                            is_usdt = True
+                    elif ex_id == 'mexc':
+                        # MEXC futures: BTC_USDT, ETH_USDT, etc.
+                        if symbol.endswith('_USDT') or symbol.endswith('USDT'):
+                            is_usdt = True
+                    elif ex_id == 'kraken':
+                        # Kraken spot: BTC/USDT, ETH/USDT, etc.
+                        if symbol.endswith('/USDT'):
+                            is_usdt = True
+                    else:
+                        # Fallback genérico
+                        if symbol.endswith('/USDT'):
+                            is_usdt = True
+
                     if not is_usdt:
                         continue
+
                     # Filtrar por tipo de mercado
                     if ex_id == 'okx' and not market.get('swap', False):
                         continue
-                    if ex_id in ('kucoin', 'mexc') and not market.get('future', False):
+                    if ex_id == 'kucoin' and not market.get('future', False) and not market.get('swap', False):
+                        continue
+                    if ex_id == 'mexc' and not market.get('future', False):
                         continue
                     if ex_id == 'kraken' and not market.get('spot', False):
                         continue
+
                     pairs.append(symbol)
-                # Filtrar por volumen (opcional)
+
+                # Filtrar por volumen
                 if min_volume_usd > 0:
                     try:
                         tickers = exchange.fetch_tickers()
@@ -114,22 +134,28 @@ class DataEngine:
                                 ticker = tickers.get(sym)
                                 if ticker:
                                     vol = ticker.get('quoteVolume', 0) or ticker.get('turnover', 0)
-                                    if vol >= min_volume_usd:
+                                    if vol and vol >= min_volume_usd:
                                         filtered.append(sym)
                             pairs = filtered
                     except Exception as e:
                         logger.warning(f"Error filtrando volumen en {ex_id}: {e}")
+
                 all_pairs[ex_id] = set(pairs)
                 logger.info(f"✅ {ex_id}: {len(pairs)} pares USDT")
             except Exception as e:
                 logger.error(f"Error en {ex_id}: {e}")
 
         if not all_pairs:
-            logger.error("❌ No se obtuvieron pares de ningún exchange")
-            self._universe_cache = []
-            return []
+            logger.warning("⚠️ No se obtuvieron pares de ningún exchange. Usando fallback.")
+            self._universe_cache = FALLBACK_SYMBOLS
+            return FALLBACK_SYMBOLS
 
+        # Intersección: si no hay comunes, usar los de Kraken (que funcionó)
         common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
+        if not common:
+            logger.warning("⚠️ Intersección vacía. Usando pares de Kraken.")
+            common = all_pairs.get('kraken', set(FALLBACK_SYMBOLS))
+
         common = sorted(list(common))[:max_pairs]
         self._universe_by_exchange = {ex_id: sorted(list(pairs & set(common))) for ex_id, pairs in all_pairs.items()}
         self._universe_cache = common
@@ -139,17 +165,42 @@ class DataEngine:
     def get_universe(self) -> List[str]:
         if self._universe_cache is None:
             self.get_common_pairs()
-        return self._universe_cache or []
+        return self._universe_cache or FALLBACK_SYMBOLS
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = TIMEFRAME, limit: int = 300,
                     force_refresh: bool = False) -> Optional[pd.DataFrame]:
+        # Normalizar símbolo para cada exchange
         for ex_id in EXCHANGE_PRIORITY:
             exchange = self.exchanges.get(ex_id)
             if exchange is None:
                 continue
 
-            cache_key = hashlib.md5(f"{symbol}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
+            # Convertir símbolo al formato del exchange
+            symbol_ex = symbol
+            if ex_id == 'okx':
+                # OKX usa BTC-USDT-SWAP
+                if '/' in symbol:
+                    base, quote = symbol.split('/')
+                    symbol_ex = f"{base}-{quote}-SWAP"
+            elif ex_id == 'kucoin':
+                # KuCoin usa XBTUSDTM
+                if symbol == 'BTC/USDT':
+                    symbol_ex = 'XBTUSDTM'
+                elif '/' in symbol:
+                    base, quote = symbol.split('/')
+                    symbol_ex = f"{base}{quote}M"
+            elif ex_id == 'mexc':
+                # MEXC usa BTC_USDT
+                if '/' in symbol:
+                    base, quote = symbol.split('/')
+                    symbol_ex = f"{base}_{quote}"
+            elif ex_id == 'kraken':
+                # Kraken usa BTC/USDT (igual)
+                symbol_ex = symbol
+
+            cache_key = hashlib.md5(f"{symbol_ex}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
             cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+
             if not force_refresh and os.path.exists(cache_path):
                 try:
                     with open(cache_path, 'rb') as f:
@@ -161,7 +212,7 @@ class DataEngine:
                     pass
 
             try:
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                ohlcv = exchange.fetch_ohlcv(symbol_ex, timeframe, limit=limit)
                 if not ohlcv:
                     continue
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -172,27 +223,43 @@ class DataEngine:
                 logger.info(f"✅ {len(df)} velas reales para {symbol} desde {ex_id}")
                 return df
             except Exception as e:
-                logger.warning(f"Error en {ex_id} para {symbol}: {e}")
+                logger.warning(f"Error en {ex_id} para {symbol_ex}: {e}")
                 continue
 
         logger.error(f"❌ No se pudo obtener {symbol} de ningún exchange")
         return None
 
     def fetch_historical(self, symbol: str, timeframe: str = TIMEFRAME,
-                         days: int = LOOKBACK_DAYS) -> Optional[pd.DataFrame]:
+                         days: int = 365) -> Optional[pd.DataFrame]:
         for ex_id in EXCHANGE_PRIORITY:
             exchange = self.exchanges.get(ex_id)
             if exchange is None:
                 continue
             try:
+                # Normalizar símbolo
+                symbol_ex = symbol
+                if ex_id == 'okx' and '/' in symbol:
+                    base, quote = symbol.split('/')
+                    symbol_ex = f"{base}-{quote}-SWAP"
+                elif ex_id == 'kucoin':
+                    if symbol == 'BTC/USDT':
+                        symbol_ex = 'XBTUSDTM'
+                    elif '/' in symbol:
+                        base, quote = symbol.split('/')
+                        symbol_ex = f"{base}{quote}M"
+                elif ex_id == 'mexc' and '/' in symbol:
+                    base, quote = symbol.split('/')
+                    symbol_ex = f"{base}_{quote}"
+
                 if timeframe.endswith('m'):
                     minutes = int(timeframe[:-1])
                     candles_per_day = 1440 // minutes
                 else:
                     candles_per_day = 288
                 limit = days * candles_per_day + 100
+
                 since = exchange.parse8601((datetime.now() - timedelta(days=days)).isoformat())
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+                ohlcv = exchange.fetch_ohlcv(symbol_ex, timeframe, since=since, limit=limit)
                 if not ohlcv:
                     continue
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -200,10 +267,10 @@ class DataEngine:
                 df.set_index('timestamp', inplace=True)
                 cutoff = datetime.now() - timedelta(days=days)
                 df = df[df.index >= cutoff]
-                logger.info(f"✅ {len(df)} velas históricas para {symbol} desde {ex_id} ({days} días)")
+                logger.info(f"✅ {len(df)} velas históricas para {symbol} desde {ex_id}")
                 return df
             except Exception as e:
-                logger.warning(f"Error en {ex_id} para histórico de {symbol}: {e}")
+                logger.warning(f"Error en {ex_id} para histórico: {e}")
                 continue
         logger.error(f"❌ No se pudo obtener histórico de {symbol}")
         return None
