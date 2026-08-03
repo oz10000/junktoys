@@ -1,15 +1,20 @@
 # config.py
 import pytz
 
-VERSION = "6.4.0"
+# ============================================================
+# VERSIÓN Y NOMBRE
+# ============================================================
+VERSION = "6.5.0"
 PROJECT_NAME = "Junk Toys — Multi-Exchange"
 
-# Exchanges que funcionan en GitHub Actions
+# ============================================================
+# EXCHANGES QUE FUNCIONAN EN GITHUB ACTIONS
+# ============================================================
 EXCHANGE_PRIORITY = [
-    'okx',
-    'kucoin',
-    'mexc',
-    'kraken',
+    'okx',      # ✅ Funciona (swap)
+    'kucoin',   # ✅ Funciona (future)
+    'mexc',     # ✅ Funciona (future)
+    'kraken',   # ✅ Funciona (spot)
 ]
 
 EXCHANGE_CONFIGS = {
@@ -44,19 +49,37 @@ FALLBACK_SYMBOLS = [
     'MATIC/USDT', 'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'BCH/USDT'
 ]
 
+# ============================================================
+# TIMEFRAME Y DATOS
+# ============================================================
 TIMEFRAME = '5m'
+TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+PRIMARY_TF = '5m'
+LOOKBACK_DAYS = 365
 INITIAL_CAPITAL = 10000.0
 COMMISSION = 0.0004
 SLIPPAGE = 0.0005
 TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
-# Riesgo y apalancamiento
+# ============================================================
+# RIESGO Y APALANCAMIENTO
+# ============================================================
 MAX_LEVERAGE_GLOBAL = 10
 RISK_PER_TRADE = 0.02
 MAX_DAILY_LOSS_PCT = 0.08
 MAX_POSITIONS = 3
+MIN_RISK_REWARD_RATIO = 1.5
 
-# Parámetros globales optimizados
+# ============================================================
+# FILTRO HORARIO
+# ============================================================
+HOUR_FILTER_START = 10
+HOUR_FILTER_END = 17
+USE_HOUR_FILTER = True
+
+# ============================================================
+# PARÁMETROS GLOBALES OPTIMIZADOS
+# ============================================================
 DEFAULT_PARAMS = {
     'min_score': 0.32,
     'adx_threshold': 22,
@@ -72,7 +95,9 @@ DEFAULT_PARAMS = {
     'rotation_confidence_gap': 0.15,
 }
 
-# Parámetros por activo
+# ============================================================
+# PARÁMETROS POR ACTIVO
+# ============================================================
 ASSET_PARAMS = {
     'BTC/USDT': {'min_score': 0.28, 'adx_threshold': 18, 'ker_threshold': 0.38, 'tp_mult': 2.8, 'sl_mult': 0.9, 'trailing_distance': 0.006, 'trailing_activation': 0.012, 'break_even_trigger': 0.008, 'leverage': 6},
     'ETH/USDT': {'min_score': 0.30, 'adx_threshold': 20, 'ker_threshold': 0.40, 'tp_mult': 2.5, 'sl_mult': 1.0, 'trailing_distance': 0.007, 'trailing_activation': 0.014, 'break_even_trigger': 0.009, 'leverage': 5},
@@ -86,7 +111,9 @@ ASSET_PARAMS = {
     'DOGE/USDT': {'min_score': 0.42, 'adx_threshold': 30, 'ker_threshold': 0.52, 'tp_mult': 1.8, 'sl_mult': 1.3, 'trailing_distance': 0.014, 'trailing_activation': 0.025, 'break_even_trigger': 0.018, 'leverage': 2},
 }
 
-# Régimen
+# ============================================================
+# RÉGIMEN Y FILTROS
+# ============================================================
 REGIME_FILTER = ['Tendencia Fuerte', 'Expansión', 'Tendencia']
 REGIME_SCORES = {
     'Expansión': 1.0,
@@ -96,11 +123,15 @@ REGIME_SCORES = {
     'Chop': 0.2,
 }
 
-# Horarios óptimos
+# ============================================================
+# HORARIOS ÓPTIMOS
+# ============================================================
 OPTIMAL_HOURS = {'best': [(5, 9)], 'good': [(1, 5), (9, 13)], 'caution': [(13, 17)], 'avoid': [(17, 21), (21, 1)]}
 OPTIMAL_DAYS = ['Tuesday', 'Wednesday']
 
-# Kill Switch
+# ============================================================
+# KILL SWITCH
+# ============================================================
 KILL_SWITCH = {
     'max_consecutive_losses': 3,
     'max_daily_drawdown_pct': 0.05,
@@ -113,6 +144,9 @@ KILL_SWITCH = {
     'recovery_top_assets': ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'],
 }
 
+# ============================================================
+# SCORING WEIGHTS
+# ============================================================
 SCORING_WEIGHTS = {
     'regime': 0.20,
     'trend_quality': 0.20,
@@ -124,14 +158,23 @@ SCORING_WEIGHTS = {
     'statistical_quality': 0.05,
 }
 
+# ============================================================
+# ZONAS DE ENTRADA
+# ============================================================
 ENTRY_ZONES = {
     'A': {'pct': 0.002, 'desc': 'Muy cercana', 'aggressiveness': 0.3, 'color': '#4CAF50'},
     'B': {'pct': 0.010, 'desc': 'Moderada', 'aggressiveness': 0.6, 'color': '#FF9800'},
     'C': {'pct': 0.025, 'desc': 'Agresiva', 'aggressiveness': 0.9, 'color': '#F44336'},
 }
 
+# ============================================================
+# WISE
+# ============================================================
 WISE_SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CHF', 'AUD', 'CAD', 'NZD', 'SGD', 'JPY', 'BRL', 'MXN', 'COP', 'ARS', 'CLP', 'PEN', 'TRY', 'INR', 'CNY']
 
+# ============================================================
+# DIRECTORIOS
+# ============================================================
 CACHE_DIR = 'data/cache'
 OHLCV_DIR = 'data/ohlcv'
 RESULTS_DIR = 'data/results'
