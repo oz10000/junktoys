@@ -86,42 +86,23 @@ class DataEngine:
 
                 for symbol, market in markets.items():
                     is_usdt = False
-
-                    # Detectar USDT según el formato de cada exchange
-                    if ex_id == 'okx':
-                        # OKX swap: BTC-USDT-SWAP, ETH-USDT-SWAP, etc.
-                        if '-USDT-SWAP' in symbol or ('-USDT-' in symbol and 'SWAP' in symbol):
-                            is_usdt = True
-                    elif ex_id == 'kucoin':
-                        # KuCoin futures: XBTUSDTM, ETHUSDTM, SOLUSDTM, etc.
-                        if symbol.endswith('USDTM') or symbol.endswith('USDT'):
-                            is_usdt = True
-                    elif ex_id == 'mexc':
-                        # MEXC futures: BTC_USDT, ETH_USDT, etc.
-                        if symbol.endswith('_USDT') or symbol.endswith('USDT'):
-                            is_usdt = True
-                    elif ex_id == 'kraken':
-                        # Kraken spot: BTC/USDT, ETH/USDT, etc.
-                        if symbol.endswith('/USDT'):
-                            is_usdt = True
-                    else:
-                        # Fallback genérico
-                        if symbol.endswith('/USDT'):
-                            is_usdt = True
-
+                    if ex_id == 'okx' and ('-USDT-SWAP' in symbol or ('-USDT-' in symbol and 'SWAP' in symbol)):
+                        is_usdt = True
+                    elif ex_id == 'kucoin' and (symbol.endswith('USDTM') or symbol.endswith('USDT')):
+                        is_usdt = True
+                    elif ex_id == 'mexc' and (symbol.endswith('_USDT') or symbol.endswith('USDT')):
+                        is_usdt = True
+                    elif ex_id == 'kraken' and symbol.endswith('/USDT'):
+                        is_usdt = True
                     if not is_usdt:
                         continue
-
                     # Filtrar por tipo de mercado
                     if ex_id == 'okx' and not market.get('swap', False):
                         continue
-                    if ex_id == 'kucoin' and not market.get('future', False) and not market.get('swap', False):
-                        continue
-                    if ex_id == 'mexc' and not market.get('future', False):
+                    if ex_id in ('kucoin', 'mexc') and not market.get('future', False):
                         continue
                     if ex_id == 'kraken' and not market.get('spot', False):
                         continue
-
                     pairs.append(symbol)
 
                 # Filtrar por volumen
@@ -145,12 +126,13 @@ class DataEngine:
             except Exception as e:
                 logger.error(f"Error en {ex_id}: {e}")
 
+        # Si no hay pares de ningún exchange, usar fallback
         if not all_pairs:
-            logger.warning("⚠️ No se obtuvieron pares de ningún exchange. Usando fallback.")
+            logger.warning("⚠️ No se obtuvieron pares. Usando fallback.")
             self._universe_cache = FALLBACK_SYMBOLS
             return FALLBACK_SYMBOLS
 
-        # Intersección: si no hay comunes, usar los de Kraken (que funcionó)
+        # Intersección
         common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
         if not common:
             logger.warning("⚠️ Intersección vacía. Usando pares de Kraken.")
@@ -178,25 +160,20 @@ class DataEngine:
             # Convertir símbolo al formato del exchange
             symbol_ex = symbol
             if ex_id == 'okx':
-                # OKX usa BTC-USDT-SWAP
                 if '/' in symbol:
                     base, quote = symbol.split('/')
                     symbol_ex = f"{base}-{quote}-SWAP"
             elif ex_id == 'kucoin':
-                # KuCoin usa XBTUSDTM
                 if symbol == 'BTC/USDT':
                     symbol_ex = 'XBTUSDTM'
                 elif '/' in symbol:
                     base, quote = symbol.split('/')
                     symbol_ex = f"{base}{quote}M"
             elif ex_id == 'mexc':
-                # MEXC usa BTC_USDT
                 if '/' in symbol:
                     base, quote = symbol.split('/')
                     symbol_ex = f"{base}_{quote}"
-            elif ex_id == 'kraken':
-                # Kraken usa BTC/USDT (igual)
-                symbol_ex = symbol
+            # kraken usa el mismo formato
 
             cache_key = hashlib.md5(f"{symbol_ex}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
             cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
@@ -230,7 +207,7 @@ class DataEngine:
         return None
 
     def fetch_historical(self, symbol: str, timeframe: str = TIMEFRAME,
-                         days: int = 365) -> Optional[pd.DataFrame]:
+                         days: int = LOOKBACK_DAYS) -> Optional[pd.DataFrame]:
         for ex_id in EXCHANGE_PRIORITY:
             exchange = self.exchanges.get(ex_id)
             if exchange is None:
