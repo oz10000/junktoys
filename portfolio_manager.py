@@ -1,4 +1,5 @@
 # portfolio_manager.py
+import pandas as pd
 from signal_engine import Signal
 from order_manager import OrderManager
 from risk_engine import get_optimal_leverage
@@ -42,7 +43,7 @@ class PortfolioManager:
             return ranking, None, None
 
         if self.position is None:
-            leverage = get_optimal_leverage(best.symbol, best.atr_pct, best.confidence, {})
+            leverage = get_optimal_leverage(best.symbol, best.atr_pct, best.confidence)
             pos = self.order_manager.open_position(best, self.capital, leverage)
             pos['entry_time'] = timestamp
             self.position = pos
@@ -60,7 +61,7 @@ class PortfolioManager:
             self.capital += close_order['pnl']
             self.history.append(close_order)
             self.position = None
-            leverage = get_optimal_leverage(best.symbol, best.atr_pct, best.confidence, {})
+            leverage = get_optimal_leverage(best.symbol, best.atr_pct, best.confidence)
             pos = self.order_manager.open_position(best, self.capital, leverage)
             pos['entry_time'] = timestamp
             self.position = pos
