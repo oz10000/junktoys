@@ -6,8 +6,8 @@ from datetime import timedelta
 # ============================================================
 # VERSIÓN
 # ============================================================
-VERSION = "6.1.0"
-PROJECT_NAME = "Junk Toys v6.1 — Laboratorio de Ejecución Manual Óptima"
+VERSION = "6.2.0"
+PROJECT_NAME = "Junk Toys v6.2 — Restauración Completa"
 
 # ============================================================
 # DATOS Y TIMEFRAMES
@@ -15,7 +15,7 @@ PROJECT_NAME = "Junk Toys v6.1 — Laboratorio de Ejecución Manual Óptima"
 TIMEFRAME = '5m'
 TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
 PRIMARY_TF = '5m'
-LOOKBACK_DAYS = 365  # <--- ESTA VARIABLE FALTABA
+LOOKBACK_DAYS = 365          # <--- AHORA EXISTE
 INITIAL_CAPITAL = 10000.0
 COMMISSION = 0.0004
 SLIPPAGE = 0.0005
@@ -25,9 +25,8 @@ TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 # ============================================================
 # EXCHANGES
 # ============================================================
-EXCHANGE_PRIORITY = ['okx', 'kucoin', 'mexc', 'kraken', 'binance', 'bybit']  # <--- ESTA FALTABA
-
-EXCHANGE_CONFIGS = {  # <--- ESTA FALTABA
+EXCHANGE_PRIORITY = ['okx', 'kucoin', 'mexc', 'kraken', 'binance', 'bybit']  # <--- EXISTE
+EXCHANGE_CONFIGS = {         # <--- EXISTE
     'okx': {'type': 'swap', 'symbol_format': '{base}-{quote}-SWAP'},
     'kucoin': {'type': 'linear', 'symbol_format': '{base}{quote}M'},
     'mexc': {'type': 'swap', 'symbol_format': '{base}_{quote}'},
@@ -35,20 +34,18 @@ EXCHANGE_CONFIGS = {  # <--- ESTA FALTABA
     'binance': {'type': 'spot', 'symbol_format': '{base}/{quote}'},
     'bybit': {'type': 'linear', 'symbol_format': '{base}/{quote}'},
 }
-
-FALLBACK_SYMBOLS = [  # <--- ESTA FALTABA
+FALLBACK_SYMBOLS = [         # <--- EXISTE
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
     'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'MATIC/USDT',
     'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'BCH/USDT', 'NEAR/USDT',
     'ALGO/USDT', 'VET/USDT', 'ICP/USDT', 'FTM/USDT', 'ARB/USDT',
-    'XAU/USD'  # <--- ORO añadido
 ]
 
 # ============================================================
 # DIRECTORIOS DE CACHÉ
 # ============================================================
-CACHE_DIR = 'data/cache'      # <--- ESTA FALTABA
-OHLCV_DIR = 'data/ohlcv'      # <--- ESTA FALTABA
+CACHE_DIR = 'data/cache'     # <--- EXISTE
+OHLCV_DIR = 'data/ohlcv'     # <--- EXISTE
 RESULTS_DIR = 'data/results'
 WISE_DATA_DIR = 'data/wise'
 
@@ -75,6 +72,16 @@ DEFAULT_PARAMS = {
     'break_even_buffer': 0.002,
     'max_hold_minutes': 120,
     'rotation_confidence_gap': 0.15,
+}
+
+# ============================================================
+# PARÁMETROS DE OPTIMIZACIÓN (para el backtesting de certificación)
+# ============================================================
+CERTIFICATION_CRITERIA = {
+    'min_win_rate': 0.50,
+    'min_profit_factor': 1.10,
+    'max_drawdown': 0.25,
+    'min_trades': 20,
 }
 
 # ============================================================
@@ -171,21 +178,6 @@ WISE_SUPPORTED_CURRENCIES = [
 ]
 
 # ============================================================
-# KILL SWITCH (para detener ejecución si es necesario)
+# KILL SWITCH
 # ============================================================
 KILL_SWITCH = False
-
-# ============================================================
-# ACTIVOS ESPECIALES (XAU, etc.)
-# ============================================================
-SPECIAL_ASSETS = {
-    'XAU/USD': {
-        'exchange': 'coingecko',
-        'symbol': 'gold',
-        'vs_currency': 'usd',
-    },
-    'XAU/USDT': {
-        'exchange': 'cryptocom',
-        'symbol': 'XAU_USDT',
-    }
-}
