@@ -4,7 +4,7 @@ import pytz
 # ============================================================
 # VERSIÓN Y NOMBRE
 # ============================================================
-VERSION = "6.2.0"
+VERSION = "6.3.0"
 PROJECT_NAME = "Junk Toys — Multi-Exchange (OKX/KuCoin/MEXC/Kraken)"
 
 # ============================================================
@@ -60,6 +60,15 @@ INITIAL_CAPITAL = 10000.0
 COMMISSION = 0.0004
 SLIPPAGE = 0.0005
 TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
+
+# ============================================================
+# RIESGO Y APALANCAMIENTO (VARIABLES CRÍTICAS)
+# ============================================================
+MAX_LEVERAGE_GLOBAL = 10          # Apalancamiento máximo permitido
+RISK_PER_TRADE = 0.02             # 2% del capital por trade
+MAX_DAILY_LOSS_PCT = 0.08         # 8% de pérdida máxima diaria
+MAX_POSITIONS = 3                 # Número máximo de posiciones simultáneas
+MIN_RISK_REWARD_RATIO = 1.5       # Ratio mínimo de riesgo/recompensa
 
 # ============================================================
 # FILTRO HORARIO (Argentina)
