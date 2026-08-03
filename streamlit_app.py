@@ -10,7 +10,7 @@ import logging
 from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
-    TIMEFRAME, KILL_SWITCH, ENTRY_ZONES
+    TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 st.set_page_config(
-    page_title="🧸 Junk Toys v6.2 — Restauración Completa",
+    page_title="🧸 Junk Toys v6.2.1 — Estabilización",
     page_icon="🧸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -95,7 +95,7 @@ with st.sidebar:
     st.header("📊 Estado")
     st.caption(f"Capital: {format_currency(INITIAL_CAPITAL)}")
     st.caption(f"Timeframe: {TIMEFRAME}")
-    st.caption(f"Activos certificados: {len(st.session_state.get('certified_symbols', []))}")
+    st.caption(f"Activos certificados: {len(st.session_state.get('certified_symbols', FALLBACK_SYMBOLS[:10]))}")
     st.caption(f"🧸 Junk Toys v{VERSION}")
 
 # ============================================================
@@ -103,19 +103,26 @@ with st.sidebar:
 # ============================================================
 if 'data_engine' not in st.session_state:
     st.session_state.data_engine = DataEngine()
-    # Obtener solo activos certificados
-    st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
-    st.session_state.symbols = st.session_state.certified_symbols
-    st.session_state.data_dict = {}
-    st.session_state.last_refresh = None
-    st.session_state.signal_history = []
+    # Intentar obtener activos certificados
+    with st.spinner("🔄 Certificando activos..."):
+        try:
+            st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
+        except Exception as e:
+            st.warning(f"Error en certificación: {e}. Usando fallback.")
+            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+        if not st.session_state.certified_symbols:
+            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+        st.session_state.symbols = st.session_state.certified_symbols
+        st.session_state.data_dict = {}
+        st.session_state.last_refresh = None
+        st.session_state.signal_history = []
 
 # ============================================================
-# FUNCIÓN PARA ESCANEAR Y RANKEAR (SOLO ACTIVOS CERTIFICADOS)
+# FUNCIÓN PARA ESCANEAR Y RANKEAR
 # ============================================================
 def scan_and_rank():
     de = st.session_state.data_engine
-    symbols = st.session_state.certified_symbols  # <--- SOLO ACTIVOS CERTIFICADOS
+    symbols = st.session_state.certified_symbols
     data_dict = {}
 
     # Descargar datos para los activos certificados
@@ -131,8 +138,8 @@ def scan_and_rank():
                     data_dict[sym] = df
                     break
 
-    # Si no hay datos, usar fallback
     if not data_dict:
+        logger.warning("No se obtuvieron datos, usando fallback")
         for sym in symbols[:10]:
             df = de.fetch_ohlcv(sym, limit=100)
             if df is not None and not df.empty:
@@ -147,7 +154,6 @@ def scan_and_rank():
 
     for sym, df in data_dict.items():
         s = Signal(sym, df, DEFAULT_PARAMS)
-        # Calcular métricas adicionales
         adx_val = compute_adx(df).iloc[-1] if not compute_adx(df).empty else 0
         ker_val = compute_ker(df, 10).iloc[-1] if not compute_ker(df).empty else 0
         atr_val = compute_atr(df).iloc[-1] if not compute_atr(df).empty else 0
@@ -178,9 +184,7 @@ def scan_and_rank():
         if s.is_valid:
             valid_signals.append(s)
 
-    # Ordenar por score absoluto (mejores scores primero)
     all_rankings.sort(key=lambda x: abs(x['score']), reverse=True)
-
     return all_rankings, valid_signals
 
 # ============================================================
@@ -210,7 +214,6 @@ def estimate_next_signal(signal_history):
 # FUNCIÓN PARA MOSTRAR DETALLES COMPLETOS DE UNA SEÑAL
 # ============================================================
 def display_signal_details(r, with_trailing=True):
-    """Muestra todos los detalles de una señal, incluyendo trailing con/sin activación"""
     if not r['is_valid']:
         st.json({
             "Activo": r['symbol'],
@@ -224,7 +227,6 @@ def display_signal_details(r, with_trailing=True):
         })
         return
 
-    # Si es válida, mostrar detalles completos
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📊 Entrada**")
@@ -241,7 +243,6 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"Break Even Trigger: {r['break_even_trigger']:.2%}")
         st.write(f"Tiempo máx: {r['max_hold_minutes']} min")
 
-    # Trailing con activación
     if with_trailing:
         st.markdown("---")
         st.markdown("#### 📊 Trailing Stop")
@@ -269,7 +270,6 @@ if refresh_btn or st.session_state.last_refresh is None:
         st.session_state.all_rankings = all_rankings
         st.session_state.valid_signals = valid_signals
 
-        # Guardar historial
         for r in all_rankings:
             if r['is_valid']:
                 st.session_state.signal_history.append({
@@ -306,7 +306,6 @@ if 'all_rankings' in st.session_state:
         longs_padded = pad_list(longs, 10)
         shorts_padded = pad_list(shorts, 10)
 
-        # MOSTRAR TOP 10 LONG
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("🟢 Top 10 Long")
@@ -346,7 +345,6 @@ if 'all_rankings' in st.session_state:
             df_short = pd.DataFrame(data_short)
             st.dataframe(df_short, width='stretch', hide_index=True)
 
-        # ===== DETALLES COMPLETOS DE TODAS LAS SEÑALES (con trailing y todo) =====
         st.markdown("---")
         st.subheader("📋 Detalles completos de todas las señales (aprobadas y rechazadas)")
 
@@ -355,7 +353,6 @@ if 'all_rankings' in st.session_state:
             with st.expander(f"{estado} — {r['symbol']} (Score: {r['score']:.3f})"):
                 display_signal_details(r, with_trailing=True)
 
-        # ===== TIEMPO HASTA PRÓXIMA SEÑAL =====
         st.markdown("---")
         st.subheader("⏳ Tiempo estimado hasta la próxima señal (Long / Short)")
 
@@ -383,7 +380,6 @@ if 'all_rankings' in st.session_state:
             else:
                 st.info("No hay suficientes datos para estimar Short")
 
-        # ===== MEJOR SEÑAL ACTUAL =====
         valid_signals = [r for r in all_rankings if r['is_valid']]
         if valid_signals:
             best = max(valid_signals, key=lambda x: abs(x['score']))
