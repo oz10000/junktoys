@@ -1,9 +1,9 @@
 name: 🧸 Mostrar Ranking en Consola
 
 on:
-  workflow_dispatch:          # Ejecución manual
+  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'     # Cada 6 horas
+    - cron: '0 */6 * * *'
 
 jobs:
   ranking:
@@ -24,13 +24,3 @@ jobs:
 
       - name: 🧸 Ejecutar ranking
         run: python scripts/console_ranking.py
-
-      - name: 📤 Subir logs (opcional)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ranking-logs
-          path: |
-            scripts/console_ranking.py
-            *.log
-          retention-days: 7
