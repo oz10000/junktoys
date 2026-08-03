@@ -10,7 +10,7 @@ import logging
 
 from data_engine import DataEngine
 from config import (
-    INITIAL_CAPITAL, DEFAULT_PARAMS, ASSET_PARAMS, UNIVERSE,
+    INITIAL_CAPITAL, DEFAULT_PARAMS, ASSET_PARAMS,
     VERSION, PROJECT_NAME, OPTIMAL_HOURS, OPTIMAL_DAYS, KILL_SWITCH,
     REGIME_FILTER, ENTRY_ZONES, WISE_SUPPORTED_CURRENCIES
 )
@@ -74,7 +74,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title(f"🧸🎉🧸 {PROJECT_NAME} 🧸🎉🧸")
-st.subheader(f"🐻🐻🐻 v{VERSION} — Bybit Optimizado (Informe 2026) 🐻🐻🐻")
+st.subheader(f"🐻🐻🐻 v{VERSION} — Exchanges verificados: OKX, KuCoin, MEXC, Kraken 🐻🐻🐻")
 st.markdown("---")
 
 # Sidebar
@@ -90,23 +90,30 @@ with st.sidebar:
     st.markdown("---")
     st.header("📊 Estado")
     st.caption(f"Capital: {format_currency(INITIAL_CAPITAL)}")
-    st.caption(f"Activos: {len(UNIVERSE)}")
-    st.caption(f"Exchange: Bybit (primario)")
+    st.caption(f"Activos: {len(st.session_state.get('universe', []))}")
+    st.caption(f"Exchanges: {', '.join(st.session_state.get('exchanges', []))}")
     st.caption(f"🧸 {PROJECT_NAME}")
 
 # Inicialización
 if 'data_engine' not in st.session_state:
-    with st.spinner("🔄 Conectando a Bybit..."):
+    with st.spinner("🔄 Conectando a OKX, KuCoin, MEXC, Kraken..."):
         try:
             de = DataEngine()
+            # Construir universo automáticamente
+            universe = de.get_common_pairs()
             st.session_state.data_engine = de
+            st.session_state.universe = universe
+            st.session_state.exchanges = de.get_available_exchanges()
             st.session_state.data_dict = {}
-            st.session_state.ranking_history = []
             st.session_state.wise_currencies = WISE_SUPPORTED_CURRENCIES
-            st.success(f"✅ Conectado a Bybit. {len(UNIVERSE)} activos listos.")
+            if universe:
+                st.success(f"✅ Universo: {len(universe)} activos comunes.")
+            else:
+                st.warning("⚠️ No se encontraron activos comunes. Verifica conectividad.")
         except Exception as e:
             st.error(f"❌ Error: {e}")
             st.session_state.data_engine = None
+            st.session_state.universe = []
 
 # Pestañas
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -117,18 +124,21 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ============================================================
-# TAB 1: TRADE ÓPTIMO (señal completa)
+# TAB 1: TRADE ÓPTIMO
 # ============================================================
 with tab1:
     st.header("🎯 Trade Óptimo — Señal Completa")
 
-    if st.session_state.data_engine is None:
-        st.warning("⚠️ DataEngine no disponible.")
+    de = st.session_state.data_engine
+    universe = st.session_state.universe
+
+    if de is None or not universe:
+        st.warning("⚠️ No hay datos disponibles. Verifica la conexión.")
         st.stop()
 
-    de = st.session_state.data_engine
+    # Descargar datos para el universo
     data_dict = {}
-    for sym in UNIVERSE[:10]:  # Top 10
+    for sym in universe[:20]:  # Limitamos a 20 para velocidad
         df = de.fetch_ohlcv(sym, limit=200)
         if df is not None and not df.empty:
             data_dict[sym] = df
@@ -147,11 +157,9 @@ with tab1:
         if not signals:
             st.warning("No hay señales válidas en este momento.")
         else:
-            # Ordenar por confianza
             best = max(signals, key=lambda x: x.confidence)
             params = ASSET_PARAMS.get(best.symbol, DEFAULT_PARAMS)
 
-            # Mostrar tarjeta
             st.markdown(f"""
             <div class="trade-card">
                 <h3>📈 {best.symbol} — {best.direction}</h3>
@@ -162,14 +170,12 @@ with tab1:
             </div>
             """, unsafe_allow_html=True)
 
-            # Columnas
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.subheader("💰 Entrada")
                 st.metric("Precio actual", f"${best.entry_price:.2f}")
                 st.metric("Leverage", f"{params.get('leverage', 3)}x")
                 st.metric("Posición sugerida", f"{INITIAL_CAPITAL * params.get('leverage', 3) / best.entry_price:.4f}")
-                st.metric("Zona Market", f"{best.entry_price * 0.999:.2f} - {best.entry_price * 1.001:.2f}")
 
             with col2:
                 st.subheader("🛑 Stop Loss")
@@ -223,9 +229,9 @@ with tab1:
             col2.metric("Tiempo hasta BE", "1.2h (promedio)")
             col3.metric("Próxima señal", "3.2h (estimado)")
 
-            # Señal resumida (formato de ejecución rápida)
+            # Señal resumida
             st.markdown("---")
-            st.subheader("📋 Señal resumida (para ejecución)")
+            st.subheader("📋 Señal resumida")
             st.code(f"""
 🧸 {best.symbol} — {best.direction}
 📊 Score: {best.score:.2%} | Confianza: {best.confidence:.2%}
@@ -244,8 +250,8 @@ with tab1:
 with tab2:
     st.header("🏆 Ranking Top 10 Long / Short")
 
-    if st.session_state.data_engine is None:
-        st.warning("⚠️ DataEngine no disponible.")
+    if st.session_state.data_engine is None or not st.session_state.universe:
+        st.warning("⚠️ No hay datos.")
         st.stop()
 
     de = st.session_state.data_engine
@@ -253,14 +259,14 @@ with tab2:
 
     if not data_dict:
         with st.spinner("🔍 Cargando datos..."):
-            for sym in UNIVERSE[:10]:
+            for sym in st.session_state.universe[:20]:
                 df = de.fetch_ohlcv(sym, limit=200)
                 if df is not None and not df.empty:
                     data_dict[sym] = df
                     st.session_state.data_dict[sym] = df
 
     if not data_dict:
-        st.warning("No hay datos.")
+        st.warning("No se obtuvieron datos.")
     else:
         signals = []
         for sym, df in data_dict.items():
@@ -335,16 +341,16 @@ with tab3:
     if run_backtest_btn:
         with st.spinner("🔄 Ejecutando backtest con datos reales..."):
             de = st.session_state.data_engine
+            universe = st.session_state.universe
             data = {}
-            for sym in UNIVERSE[:10]:
+            for sym in universe[:10]:
                 df = de.fetch_historical(sym, days=180)
                 if df is not None and not df.empty:
                     data[sym] = df
 
             if not data:
-                st.error("No se pudieron obtener datos históricos.")
+                st.error("No se obtuvieron datos históricos.")
             else:
-                # Usar parámetros globales para backtest (se pueden ajustar)
                 params = {'__global__': DEFAULT_PARAMS}
                 bt = Backtester(data, params, INITIAL_CAPITAL,
                                 use_hour_filter=use_hour_filter,
@@ -386,7 +392,6 @@ with tab3:
 with tab4:
     st.header("📊 Diagnóstico del Mercado y Horarios Óptimos")
 
-    # Diagnóstico simple
     if st.session_state.data_dict:
         df_sample = next(iter(st.session_state.data_dict.values()))
         if df_sample is not None and not df_sample.empty:
@@ -397,7 +402,6 @@ with tab4:
                 st.metric("ADX actual (BTC)", f"{adx_series.iloc[-1]:.1f}")
             st.metric("Régimen predominante", regime)
 
-    # Horarios óptimos
     st.subheader("🕒 Horarios óptimos (Argentina)")
     st.markdown("""
     | Ventana | Horario | Win Rate | Profit Factor |
@@ -413,11 +417,9 @@ with tab4:
     st.write("⚠️ Viernes con cautela")
     st.write("❌ Sábados y Domingos: evitar operar")
 
-    # Kill Switch
     st.subheader("🔴 Kill Switch Manual")
     st.json(KILL_SWITCH)
 
-    # Exchanges
     st.subheader("🔌 Estado de Exchanges")
     de = st.session_state.data_engine
     if de:
