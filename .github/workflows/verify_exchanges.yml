@@ -1,0 +1,37 @@
+name: 🔍 Verificar Conectividad de Exchanges
+
+on:
+  workflow_dispatch:          # Ejecución manual desde GitHub
+  schedule:
+    - cron: '0 6 * * 1'       # Todos los lunes a las 06:00 UTC
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🐙 Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Instalar dependencias
+        run: |
+          pip install --upgrade pip
+          pip install ccxt
+
+      - name: 🔍 Verificar exchanges
+        run: python verify_exchanges.py
+
+      - name: 📤 Subir informe como artefacto (opcional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exchange-verification-logs
+          path: |
+            verify_exchanges.py
+            *.log
+          retention-days: 7
