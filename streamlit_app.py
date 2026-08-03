@@ -9,7 +9,8 @@ import logging
 from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, ASSET_PARAMS,
-    VERSION, PROJECT_NAME, KILL_SWITCH, WISE_SUPPORTED_CURRENCIES
+    VERSION, PROJECT_NAME, KILL_SWITCH, WISE_SUPPORTED_CURRENCIES,
+    FALLBACK_SYMBOLS
 )
 from signal_engine import Signal
 from backtester import Backtester
@@ -25,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos
 st.markdown("""
     <style>
         .reportview-container .main .block-container {
@@ -60,7 +60,6 @@ st.title(f"🧸🎉🧸 {PROJECT_NAME} 🧸🎉🧸")
 st.subheader(f"🐻🐻🐻 v{VERSION} — Exchanges verificados: OKX, KuCoin, MEXC, Kraken 🐻🐻🐻")
 st.markdown("---")
 
-# Sidebar
 with st.sidebar:
     st.image("https://img.icons8.com/emoji/96/000000/teddy-bear-emoji.png", width=80)
     st.header("⚙️ Configuración")
@@ -77,37 +76,30 @@ with st.sidebar:
     st.caption(f"Exchanges: {', '.join(st.session_state.get('exchanges', []))}")
     st.caption(f"🧸 {PROJECT_NAME}")
 
-# Inicialización
 if 'data_engine' not in st.session_state:
     with st.spinner("🔄 Conectando a OKX, KuCoin, MEXC, Kraken..."):
         try:
             de = DataEngine()
             universe = de.get_common_pairs()
+            if not universe:
+                universe = FALLBACK_SYMBOLS
+                st.warning("⚠️ No se encontraron pares comunes. Usando lista de respaldo.")
             st.session_state.data_engine = de
             st.session_state.universe = universe
             st.session_state.exchanges = de.get_available_exchanges()
             st.session_state.data_dict = {}
             st.session_state.wise_currencies = WISE_SUPPORTED_CURRENCIES
-            if universe:
-                st.success(f"✅ Universo: {len(universe)} activos comunes.")
-            else:
-                st.warning("⚠️ No se encontraron activos comunes. Verifica conectividad.")
+            st.success(f"✅ Universo: {len(universe)} activos.")
         except Exception as e:
             st.error(f"❌ Error: {e}")
             st.session_state.data_engine = None
-            st.session_state.universe = []
+            st.session_state.universe = FALLBACK_SYMBOLS
+            st.session_state.exchanges = []
 
-# Pestañas
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Trade Óptimo",
-    "🏆 Ranking",
-    "📈 Backtesting",
-    "📊 Diagnóstico & Horarios"
-])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Trade Óptimo", "🏆 Ranking", "📈 Backtesting", "📊 Diagnóstico & Horarios"])
 
-# TAB 1: TRADE ÓPTIMO
 with tab1:
-    st.header("🎯 Trade Óptimo — Señal Completa")
+    st.header("🎯 Trade Óptimo")
     de = st.session_state.data_engine
     universe = st.session_state.universe
     if de is None or not universe:
@@ -141,7 +133,6 @@ with tab1:
             <div class="trade-card">
                 <h3>📈 {best.symbol} — {best.direction}</h3>
                 <p><b>Score:</b> {best.score:.2%} | <b>Confianza:</b> {best.confidence:.2%} | <b>Régimen:</b> {best.regime}</p>
-                <p><b>Ranking:</b> #1 de {len(signals)} activos</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -150,7 +141,6 @@ with tab1:
                 st.subheader("💰 Entrada")
                 st.metric("Precio actual", f"${best.entry_price:.2f}")
                 st.metric("Leverage", f"{params.get('leverage', 3)}x")
-                st.metric("Posición sugerida", f"{INITIAL_CAPITAL * params.get('leverage', 3) / best.entry_price:.4f}")
             with col2:
                 st.subheader("🛑 Stop Loss")
                 sl_pct = (best.entry_price - best.sl_price) / best.entry_price * 100
@@ -173,19 +163,13 @@ with tab1:
                 st.markdown("#### ❌ Sin Activación")
                 st.metric("Activación", "N/A")
                 st.metric("Distancia", f"{params['trailing_distance']*100:.2f}%")
-            st.info(f"📌 **Recomendación:** Trailing {'CON' if trailing_activation_enabled else 'SIN'} activación.")
+            st.info(f"📌 Recomendación: Trailing {'CON' if trailing_activation_enabled else 'SIN'} activación.")
 
             st.subheader("⚖️ Break Even")
             col1, col2, col3 = st.columns(3)
             col1.metric("Trigger", f"{params['break_even_trigger']*100:.2f}%")
             col2.metric("Precio Trigger", f"${best.entry_price * (1 + params['break_even_trigger']):.2f}")
             col3.metric("Buffer", f"{params['break_even_buffer']*100:.2f}%")
-
-            st.subheader("📊 Estadísticas")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Probabilidad", f"{best.confidence * 100:.1f}%")
-            col2.metric("Drawdown esperado", f"{-sl_pct * 0.3:.2f}%")
-            col3.metric("Risk/Reward", f"{tp_pct / sl_pct:.2f}" if sl_pct > 0 else "∞")
 
             st.subheader("📋 Señal resumida")
             st.code(f"""
@@ -199,14 +183,75 @@ with tab1:
 📈 Win Rate histórico: 87.2%
             """, language="bash")
 
-# TAB 2: RANKING (similar a la versión anterior, omitido por brevedad, pero completo)
-# ... (se omite por espacio, pero debe incluirse en el archivo final)
+with tab2:
+    st.header("🏆 Ranking Top 10 Long / Short")
+    de = st.session_state.data_engine
+    universe = st.session_state.universe
+    if de is None or not universe:
+        st.warning("⚠️ No hay datos.")
+        st.stop()
 
-# TAB 3: BACKTESTING
+    data_dict = st.session_state.data_dict
+    if not data_dict:
+        with st.spinner("🔍 Cargando datos..."):
+            for sym in universe[:20]:
+                df = de.fetch_ohlcv(sym, limit=200)
+                if df is not None and not df.empty:
+                    data_dict[sym] = df
+                    st.session_state.data_dict[sym] = df
+
+    if not data_dict:
+        st.warning("No se obtuvieron datos.")
+    else:
+        signals = []
+        for sym, df in data_dict.items():
+            params = ASSET_PARAMS.get(sym, DEFAULT_PARAMS)
+            s = Signal(sym, df, params)
+            signals.append(s)
+
+        longs = [s for s in signals if s.direction == 'Long']
+        shorts = [s for s in signals if s.direction == 'Short']
+        longs.sort(key=lambda x: x.confidence, reverse=True)
+        shorts.sort(key=lambda x: x.confidence, reverse=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("🟢 Top 10 Long")
+            if longs:
+                df_long = pd.DataFrame([{
+                    'Pos': i+1,
+                    'Activo': s.symbol,
+                    'Score': f"{s.score:.2%}",
+                    'Confianza': f"{s.confidence:.2%}",
+                    'Régimen': s.regime,
+                    'Precio': s.entry_price,
+                    'SL': s.sl_price,
+                    'TP': s.tp_price,
+                } for i, s in enumerate(longs[:10])])
+                st.dataframe(df_long, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No hay Long")
+        with col2:
+            st.subheader("🔴 Top 10 Short")
+            if shorts:
+                df_short = pd.DataFrame([{
+                    'Pos': i+1,
+                    'Activo': s.symbol,
+                    'Score': f"{s.score:.2%}",
+                    'Confianza': f"{s.confidence:.2%}",
+                    'Régimen': s.regime,
+                    'Precio': s.entry_price,
+                    'SL': s.sl_price,
+                    'TP': s.tp_price,
+                } for i, s in enumerate(shorts[:10])])
+                st.dataframe(df_short, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No hay Short")
+
 with tab3:
     st.header("🧪 Backtesting 24/7")
     if run_backtest_btn:
-        with st.spinner("🔄 Ejecutando backtest con datos reales..."):
+        with st.spinner("🔄 Ejecutando backtest..."):
             de = st.session_state.data_engine
             universe = st.session_state.universe
             data = {}
@@ -233,11 +278,10 @@ with tab3:
                     st.plotly_chart(fig, use_container_width=True)
                 if not trades.empty:
                     csv = trades.to_csv(index=False)
-                    st.download_button("⬇️ Descargar trades (CSV)", data=csv, file_name="backtest_trades.csv")
+                    st.download_button("⬇️ Descargar trades", data=csv, file_name="trades.csv")
     else:
         st.info("Presiona el botón en la barra lateral.")
 
-# TAB 4: DIAGNÓSTICO Y HORARIOS
 with tab4:
     st.header("📊 Diagnóstico y Horarios")
     st.subheader("🕒 Horarios óptimos (Argentina)")
@@ -251,7 +295,7 @@ with tab4:
     """)
     st.subheader("📅 Días recomendados")
     st.write("✅ Martes y Miércoles")
-    st.write("❌ Sábados y Domingos: evitar operar")
+    st.write("❌ Sábados y Domingos: evitar")
     st.subheader("🔴 Kill Switch")
     st.json(KILL_SWITCH)
     st.subheader("🔌 Estado de Exchanges")
