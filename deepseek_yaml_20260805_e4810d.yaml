@@ -1,0 +1,93 @@
+# .github/workflows/verify_sources.yml
+name: 🔍 Verificar Fuentes de Datos
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Cada 6 horas
+  workflow_dispatch:       # Manual
+
+jobs:
+  verify-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          pip install ccxt pandas numpy requests
+      
+      - name: Verificar fuentes
+        run: |
+          python -c "
+          import ccxt
+          import requests
+          import sys
+          
+          print('🔍 VERIFICANDO FUENTES DE DATOS')
+          print('=' * 60)
+          
+          # Binance
+          try:
+              b = ccxt.binance({'enableRateLimit': True})
+              b.load_markets()
+              print('✅ Binance: OK')
+          except Exception as e:
+              print(f'❌ Binance: {e}')
+          
+          # Bybit
+          try:
+              by = ccxt.bybit({'enableRateLimit': True})
+              by.load_markets()
+              print('✅ Bybit: OK')
+          except Exception as e:
+              print(f'❌ Bybit: {e}')
+          
+          # CoinGecko
+          try:
+              r = requests.get('https://api.coingecko.com/api/v3/ping', timeout=10)
+              if r.status_code == 200:
+                  print('✅ CoinGecko: OK')
+              else:
+                  print(f'⚠️ CoinGecko: {r.status_code}')
+          except Exception as e:
+              print(f'❌ CoinGecko: {e}')
+          
+          # Crypto.com
+          try:
+              r = requests.get('https://api.crypto.com/v2/public/get-ticker', 
+                              params={'instrument_name': 'BTC_USDT'}, timeout=10)
+              if r.status_code == 200:
+                  print('✅ Crypto.com: OK')
+              else:
+                  print(f'⚠️ Crypto.com: {r.status_code}')
+          except Exception as e:
+              print(f'❌ Crypto.com: {e}')
+          
+          # Stooq (para macro)
+          try:
+              r = requests.get('https://stooq.com/q/d/l/?s=spx&d1=20240101&d2=20241231&i=d', timeout=10)
+              if r.status_code == 200 and 'Exceeded' not in r.text:
+                  print('✅ Stooq: OK')
+              else:
+                  print(f'⚠️ Stooq: {r.status_code}')
+          except Exception as e:
+              print(f'❌ Stooq: {e}')
+          
+          print('=' * 60)
+          print('Verificación completada.')
+          "
+      
+      - name: Guardar resultados
+        run: |
+          echo "Última verificación: $(date -u)" > source_status.txt
+          echo "Fuentes verificadas" >> source_status.txt
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-verification
+          path: source_status.txt
