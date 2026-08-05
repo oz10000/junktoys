@@ -6,12 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
 import logging
-import sys
-import os
 
-# ============================================================
-# IMPORTS DEL SISTEMA PRINCIPAL
-# ============================================================
 from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
@@ -20,26 +15,13 @@ from config import (
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
 from utils import format_currency
-from backtester import Backtester
 
-# ============================================================
-# IMPORTS DE FIRM SIGNALS Ω (con fallback seguro)
-# ============================================================
-FIRM_SIGNALS_AVAILABLE = False
-try:
-    from firm_signals_omega.streamlit_app import render_firm_signals_panel
-    FIRM_SIGNALS_AVAILABLE = True
-except ImportError:
-    # Si no está disponible, definimos una función placeholder
-    def render_firm_signals_panel():
-        st.warning("⚠️ El módulo Firm Signals Ω no está instalado. Consulta la documentación para su instalación.")
-        st.info("Para instalar: copia la carpeta 'firm_signals_omega' en la raíz del proyecto.")
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ============================================================
-# CONFIGURACIÓN DE LA PÁGINA
-# ============================================================
 st.set_page_config(
-    page_title="🧸 Junk Toys — Sistema de Señales",
+    page_title="🧸 Junk Toys v6.2.1 — Estabilización",
     page_icon="🧸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -97,7 +79,7 @@ st.subheader(f"🐻🐻🐻 v{VERSION} — Asistente de Ejecución Manual 🐻�
 st.markdown("---")
 
 # ============================================================
-# SIDEBAR (configuración y botones)
+# SIDEBAR
 # ============================================================
 with st.sidebar:
     st.image("https://img.icons8.com/emoji/96/000000/teddy-bear-emoji.png", width=80)
@@ -107,21 +89,8 @@ with st.sidebar:
     trailing_activation_enabled = (trailing_mode == "Con activación")
     st.markdown("---")
     st.header("🚀 Acciones")
-    
-    # Botón de backtesting (sistema principal)
+    refresh_btn = st.button("🔄 Actualizar Ranking", type="primary", use_container_width=True)
     run_backtest_btn = st.button("🧪 Backtesting", type="secondary", use_container_width=True)
-    # Botón de optimización (sistema principal)
-    run_optimization_btn = st.button("🧠 Optimización", type="secondary", use_container_width=True)
-    # Botón para abrir Firm Signals Ω (nuevo)
-    if FIRM_SIGNALS_AVAILABLE:
-        st.markdown("---")
-        st.header("🧸 Firm Signals Ω")
-        if st.button("🚀 Ejecutar Análisis", type="primary", use_container_width=True):
-            st.session_state.show_firm_signals = True
-    else:
-        st.markdown("---")
-        st.info("⚡ Firm Signals Ω no disponible")
-    
     st.markdown("---")
     st.header("📊 Estado")
     st.caption(f"Capital: {format_currency(INITIAL_CAPITAL)}")
@@ -130,7 +99,7 @@ with st.sidebar:
     st.caption(f"🧸 Junk Toys v{VERSION}")
 
 # ============================================================
-# INICIALIZACIÓN DE SESIÓN (sistema principal)
+# INICIALIZACIÓN
 # ============================================================
 if 'data_engine' not in st.session_state:
     st.session_state.data_engine = DataEngine()
@@ -149,18 +118,20 @@ if 'data_engine' not in st.session_state:
         st.session_state.signal_history = []
 
 # ============================================================
-# FUNCIONES DEL SISTEMA PRINCIPAL
+# FUNCIÓN PARA ESCANEAR Y RANKEAR
 # ============================================================
 def scan_and_rank():
     de = st.session_state.data_engine
     symbols = st.session_state.certified_symbols
     data_dict = {}
 
+    # Descargar datos para los activos certificados
     for sym in symbols[:30]:
         df = de.fetch_ohlcv(sym, limit=300)
         if df is not None and not df.empty:
             data_dict[sym] = df
         else:
+            # Intentar con otro exchange
             for alt_ex in ['kucoin', 'mexc', 'kraken']:
                 df = de.fetch_ohlcv(sym, limit=300, exchange_id=alt_ex)
                 if df is not None and not df.empty:
@@ -168,6 +139,7 @@ def scan_and_rank():
                     break
 
     if not data_dict:
+        logger.warning("No se obtuvieron datos, usando fallback")
         for sym in symbols[:10]:
             df = de.fetch_ohlcv(sym, limit=100)
             if df is not None and not df.empty:
@@ -176,8 +148,24 @@ def scan_and_rank():
     st.session_state.data_dict = data_dict
     st.session_state.last_refresh = datetime.now()
 
+    # Generar señales para todos los activos (aprobados o no)
     all_rankings = []
     valid_signals = []
+
+    # Calcular estadísticas históricas para estimación de tiempo
+    # (promedio de intervalos entre señales válidas)
+    time_stats = {}
+    for sym in data_dict.keys():
+        # Buscar en el historial de señales los intervalos para este símbolo
+        hist = [s for s in st.session_state.signal_history if s.get('symbol') == sym and s.get('is_valid', False)]
+        if len(hist) > 1:
+            intervals = [(hist[i+1]['timestamp'] - hist[i]['timestamp']).total_seconds() / 60 for i in range(len(hist)-1)]
+            if intervals:
+                time_stats[sym] = {
+                    'avg_interval': np.mean(intervals),
+                    'std_interval': np.std(intervals),
+                    'last_time': hist[-1]['timestamp']
+                }
 
     for sym, df in data_dict.items():
         s = Signal(sym, df, DEFAULT_PARAMS)
@@ -185,6 +173,25 @@ def scan_and_rank():
         ker_val = compute_ker(df, 10).iloc[-1] if not compute_ker(df).empty else 0
         atr_val = compute_atr(df).iloc[-1] if not compute_atr(df).empty else 0
         atr_pct = atr_val / s.entry_price * 100 if s.entry_price > 0 else 0
+        # Amplitud en USD = ATR, en % = atr_pct
+        amplitude_usd = atr_val
+        amplitude_pct = atr_pct
+
+        # Estimar tiempo hasta la próxima señal para este activo
+        estimated_time = None
+        if sym in time_stats:
+            last_time = time_stats[sym]['last_time']
+            avg_interval = time_stats[sym]['avg_interval']
+            elapsed = (datetime.now() - last_time).total_seconds() / 60
+            remaining = max(0, avg_interval - elapsed)
+            # Si la señal es válida, el tiempo restante es 0 (ya está activa)
+            if s.is_valid:
+                remaining = 0
+            # Si el score es alto pero no válida, podría estar cerca
+            elif abs(s.score) > 0.4:
+                # Ajuste heurístico: cuanto mayor el score, menor el tiempo restante
+                remaining *= (1 - abs(s.score))
+            estimated_time = max(0, remaining)
 
         rank_entry = {
             'symbol': sym,
@@ -193,6 +200,8 @@ def scan_and_rank():
             'adx': adx_val,
             'ker': ker_val,
             'atr_pct': atr_pct,
+            'amplitude_pct': amplitude_pct,
+            'amplitude_usd': amplitude_usd,
             'direction': s.direction if s.is_valid else 'N/A',
             'is_valid': s.is_valid,
             'reason': s.reason if not s.is_valid else '✅ Aprobado',
@@ -206,6 +215,7 @@ def scan_and_rank():
             'break_even_trigger': s.break_even_trigger if s.is_valid else 0,
             'break_even_buffer': s.break_even_buffer if s.is_valid else 0,
             'max_hold_minutes': s.max_hold_minutes if s.is_valid else 0,
+            'estimated_time': estimated_time,  # minutos
         }
         all_rankings.append(rank_entry)
         if s.is_valid:
@@ -214,7 +224,19 @@ def scan_and_rank():
     all_rankings.sort(key=lambda x: abs(x['score']), reverse=True)
     return all_rankings, valid_signals
 
-def estimate_next_signal(signal_history):
+# ============================================================
+# FUNCIÓN PARA PADEAR LISTAS A 10 ELEMENTOS
+# ============================================================
+def pad_list(items, target=10):
+    result = items[:target]
+    while len(result) < target:
+        result.append(None)
+    return result
+
+# ============================================================
+# ESTIMACIÓN DE TIEMPO HASTA PRÓXIMA SEÑAL (global)
+# ============================================================
+def estimate_next_signal_global(signal_history):
     if len(signal_history) < 3:
         return None
     valid_times = [s['timestamp'] for s in signal_history if s.get('is_valid', False)]
@@ -234,6 +256,9 @@ def estimate_next_signal(signal_history):
         'confidence': 1 - (std_interval / avg_interval) if avg_interval > 0 else 0
     }
 
+# ============================================================
+# FUNCIÓN PARA MOSTRAR DETALLES COMPLETOS DE UNA SEÑAL
+# ============================================================
 def display_signal_details(r, with_trailing=True):
     if not r['is_valid']:
         st.json({
@@ -242,6 +267,8 @@ def display_signal_details(r, with_trailing=True):
             "ADX": r['adx'],
             "KER": r['ker'],
             "ATR%": r['atr_pct'],
+            "Amplitud %": r['amplitude_pct'],
+            "Amplitud USD": r['amplitude_usd'],
             "Régimen": r['regime'],
             "Estado": "❌ RECHAZADO",
             "Motivo": r['reason']
@@ -256,6 +283,7 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"Score: {r['score']:.3f}")
         st.write(f"Confianza: {r['confidence']:.2%}")
         st.write(f"Régimen: {r['regime']}")
+        st.write(f"Amplitud: {r['amplitude_pct']:.2f}% (${r['amplitude_usd']:.2f})")
 
     with col2:
         st.markdown("**🛑 Gestión de Riesgo**")
@@ -281,7 +309,7 @@ def display_signal_details(r, with_trailing=True):
             st.write(f"SL trailing: ${r['entry_price'] * (1 - r['trailing_distance']):.4f}")
 
 # ============================================================
-# PESTAÑAS PRINCIPALES (incluyendo Firm Signals Ω)
+# PESTAÑAS (8 pestañas, incluyendo Firm Signals Ω)
 # ============================================================
 tab_names = [
     "📊 Trade Óptimo",
@@ -293,11 +321,10 @@ tab_names = [
     "🏦 Exchanges & Wise",
     "🧸 Firm Signals Ω"
 ]
-
 tabs = st.tabs(tab_names)
 
 # ============================================================
-# TAB 1: Trade Óptimo (copiado del sistema original)
+# TAB 1: Trade Óptimo
 # ============================================================
 with tabs[0]:
     st.header("🎯 Trade Óptimo — Listo para Ejecutar")
@@ -404,6 +431,7 @@ with tabs[0]:
                                 for res, qual in best.get('resistances', [])[:5]:
                                     st.write(f"  ${res:.2f} (calidad: {qual:.2f})")
                         st.subheader("📊 Zonas de Entrada")
+                        from amplitude_analyzer import define_zones
                         zones = define_zones(trade.amplitudes.get('avg_candle_range', 0.5), trade.entry_price)
                         for zone_name, zone_data in zones.items():
                             color = ENTRY_ZONES.get(zone_name, {}).get('color', '#888')
@@ -441,91 +469,159 @@ with tabs[0]:
             st.info("⏳ No hay suficientes datos para estimar la próxima oportunidad")
 
 # ============================================================
-# TAB 2: Ranking Completo (sistema principal)
+# TAB 2: Ranking Completo
 # ============================================================
 with tabs[1]:
     st.header("🏆 Ranking Completo — Top 10 Long / Short")
-    with st.spinner("🔍 Escaneando el mercado..."):
-        try:
-            de = st.session_state.data_engine
-            symbols = st.session_state.symbols[:50]
-            data_dict = {}
-            for sym in symbols[:30]:
-                df = de.fetch_ohlcv(sym, limit=300)
-                if df is not None and not df.empty:
-                    data_dict[sym] = df
-            if data_dict:
-                signals = []
-                for sym, df in data_dict.items():
-                    s = Signal(sym, df, DEFAULT_PARAMS)
-                    if s.is_valid:
-                        signals.append(s)
-                if signals:
-                    from ranking_engine import RankingEngine
-                    ranking_engine = RankingEngine(de)
-                    ranking = ranking_engine.rank_symbols(signals, data_dict)
-                    if ranking:
-                        longs = [r for r in ranking if r['direction'] == 'Long']
-                        shorts = [r for r in ranking if r['direction'] == 'Short']
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.subheader("🟢 Top 10 Long")
-                            if longs:
-                                df_long = pd.DataFrame([{
-                                    'Pos': i+1,
-                                    'Activo': r['symbol'],
-                                    'Score': f"{r['score']:.2%}",
-                                    'Confianza': f"{r['confidence']:.2%}",
-                                    'Edge': r.get('edge_type', 'N/A'),
-                                    'Régimen': r['regime'],
-                                    'Precio': r['entry_price'],
-                                    'SL': r['sl'],
-                                    'TP': r['tp'],
-                                } for i, r in enumerate(longs[:10])])
-                                st.dataframe(df_long, width='stretch', hide_index=True)
-                            else:
-                                st.warning("No hay señales Long")
-                        with col2:
-                            st.subheader("🔴 Top 10 Short")
-                            if shorts:
-                                df_short = pd.DataFrame([{
-                                    'Pos': i+1,
-                                    'Activo': r['symbol'],
-                                    'Score': f"{r['score']:.2%}",
-                                    'Confianza': f"{r['confidence']:.2%}",
-                                    'Edge': r.get('edge_type', 'N/A'),
-                                    'Régimen': r['regime'],
-                                    'Precio': r['entry_price'],
-                                    'SL': r['sl'],
-                                    'TP': r['tp'],
-                                } for i, r in enumerate(shorts[:10])])
-                                st.dataframe(df_short, width='stretch', hide_index=True)
-                            else:
-                                st.warning("No hay señales Short")
-                        with st.expander("📋 Detalles completos de todas las señales"):
-                            for r in ranking[:20]:
-                                st.write(f"**{r['symbol']}** — {r['direction']} (Score: {r['score']:.2%})")
-                                st.json({
-                                    "Score": r['score'],
-                                    "Confianza": r['confidence'],
-                                    "Edge": r.get('edge_type', 'N/A'),
-                                    "Régimen": r['regime'],
-                                    "Precio": r['entry_price'],
-                                    "SL": r['sl'],
-                                    "TP": r['tp'],
-                                    "Amplitud": r.get('predicted_amplitude', 0),
-                                })
+    if refresh_btn or st.session_state.last_refresh is None:
+        with st.spinner("🔍 Escaneando el mercado..."):
+            all_rankings, valid_signals = scan_and_rank()
+            st.session_state.all_rankings = all_rankings
+            st.session_state.valid_signals = valid_signals
+
+            for r in all_rankings:
+                if r['is_valid']:
+                    st.session_state.signal_history.append({
+                        'timestamp': datetime.now(),
+                        'symbol': r['symbol'],
+                        'direction': r['direction'],
+                        'score': r['score'],
+                        'is_valid': True
+                    })
+            if len(st.session_state.signal_history) > 100:
+                st.session_state.signal_history = st.session_state.signal_history[-100:]
+
+    if 'all_rankings' in st.session_state:
+        all_rankings = st.session_state.all_rankings
+
+        if not all_rankings:
+            st.warning("No se encontraron señales. Intenta actualizar.")
+        else:
+            # Separar Long y Short
+            longs = [r for r in all_rankings if r['direction'] == 'Long' or (r['direction'] == 'N/A' and r['score'] > 0)]
+            shorts = [r for r in all_rankings if r['direction'] == 'Short' or (r['direction'] == 'N/A' and r['score'] < 0)]
+
+            if not longs:
+                longs = sorted([r for r in all_rankings if r['score'] > 0], key=lambda x: abs(x['score']), reverse=True)
+            if not shorts:
+                shorts = sorted([r for r in all_rankings if r['score'] < 0], key=lambda x: abs(x['score']), reverse=True)
+
+            longs_padded = pad_list(longs, 10)
+            shorts_padded = pad_list(shorts, 10)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("🟢 Top 10 Long")
+                data_long = []
+                for i, r in enumerate(longs_padded):
+                    if r is None:
+                        data_long.append({'Pos': i+1, 'Activo': 'N/A', 'Score': 'N/A', 'ADX': 'N/A', 'KER': 'N/A', 'Amplitud%': 'N/A', 'Amplitud$': 'N/A', 'Tiempo estimado': 'N/A', 'Aprobado': 'N/A', 'Motivo': 'No hay suficientes longs'})
                     else:
-                        st.warning("No hay señales válidas")
+                        # Formatear tiempo estimado
+                        if r['estimated_time'] is not None:
+                            if r['estimated_time'] < 1:
+                                time_str = "< 1 min"
+                            elif r['estimated_time'] < 60:
+                                time_str = f"{int(r['estimated_time'])} min"
+                            else:
+                                time_str = f"{r['estimated_time']/60:.1f} h"
+                        else:
+                            time_str = "N/A"
+                        data_long.append({
+                            'Pos': i+1,
+                            'Activo': r['symbol'],
+                            'Score': f"{r['score']:.3f}",
+                            'ADX': f"{r['adx']:.1f}",
+                            'KER': f"{r['ker']:.2f}",
+                            'Amplitud%': f"{r['amplitude_pct']:.2f}%",
+                            'Amplitud$': f"${r['amplitude_usd']:.2f}",
+                            'Tiempo estimado': time_str,
+                            'Aprobado': "✅" if r['is_valid'] else "❌",
+                            'Motivo': r['reason'] if not r['is_valid'] else "✅ Aprobado"
+                        })
+                df_long = pd.DataFrame(data_long)
+                st.dataframe(df_long, width='stretch', hide_index=True)
+
+            with col2:
+                st.subheader("🔴 Top 10 Short")
+                data_short = []
+                for i, r in enumerate(shorts_padded):
+                    if r is None:
+                        data_short.append({'Pos': i+1, 'Activo': 'N/A', 'Score': 'N/A', 'ADX': 'N/A', 'KER': 'N/A', 'Amplitud%': 'N/A', 'Amplitud$': 'N/A', 'Tiempo estimado': 'N/A', 'Aprobado': 'N/A', 'Motivo': 'No hay suficientes shorts'})
+                    else:
+                        if r['estimated_time'] is not None:
+                            if r['estimated_time'] < 1:
+                                time_str = "< 1 min"
+                            elif r['estimated_time'] < 60:
+                                time_str = f"{int(r['estimated_time'])} min"
+                            else:
+                                time_str = f"{r['estimated_time']/60:.1f} h"
+                        else:
+                            time_str = "N/A"
+                        data_short.append({
+                            'Pos': i+1,
+                            'Activo': r['symbol'],
+                            'Score': f"{r['score']:.3f}",
+                            'ADX': f"{r['adx']:.1f}",
+                            'KER': f"{r['ker']:.2f}",
+                            'Amplitud%': f"{r['amplitude_pct']:.2f}%",
+                            'Amplitud$': f"${r['amplitude_usd']:.2f}",
+                            'Tiempo estimado': time_str,
+                            'Aprobado': "✅" if r['is_valid'] else "❌",
+                            'Motivo': r['reason'] if not r['is_valid'] else "✅ Aprobado"
+                        })
+                df_short = pd.DataFrame(data_short)
+                st.dataframe(df_short, width='stretch', hide_index=True)
+
+            st.markdown("---")
+            st.subheader("📋 Detalles completos de todas las señales (aprobadas y rechazadas)")
+
+            for r in all_rankings[:20]:
+                estado = "✅ APROBADO" if r['is_valid'] else "❌ RECHAZADO"
+                with st.expander(f"{estado} — {r['symbol']} (Score: {r['score']:.3f})"):
+                    display_signal_details(r, with_trailing=True)
+
+            st.markdown("---")
+            st.subheader("⏳ Tiempo estimado hasta la próxima señal (Long / Short)")
+
+            long_history = [s for s in st.session_state.signal_history if s['direction'] == 'Long' and s['is_valid']]
+            short_history = [s for s in st.session_state.signal_history if s['direction'] == 'Short' and s['is_valid']]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                est_long = estimate_next_signal_global(long_history)
+                if est_long:
+                    st.metric("⏱️ Próxima señal LONG",
+                              f"{est_long['remaining_minutes']:.0f} min",
+                              delta=f"Promedio: {est_long['avg_minutes']:.0f} min")
+                    st.caption(f"Confianza: {est_long['confidence']:.0%}")
                 else:
-                    st.warning("No hay señales válidas")
+                    st.info("No hay suficientes datos para estimar Long")
+
+            with col2:
+                est_short = estimate_next_signal_global(short_history)
+                if est_short:
+                    st.metric("⏱️ Próxima señal SHORT",
+                              f"{est_short['remaining_minutes']:.0f} min",
+                              delta=f"Promedio: {est_short['avg_minutes']:.0f} min")
+                    st.caption(f"Confianza: {est_short['confidence']:.0%}")
+                else:
+                    st.info("No hay suficientes datos para estimar Short")
+
+            valid_signals = [r for r in all_rankings if r['is_valid']]
+            if valid_signals:
+                best = max(valid_signals, key=lambda x: abs(x['score']))
+                st.success(f"🧸 **Mejor señal actual:** {best['symbol']} ({best['direction']}) — Score: {best['score']:.3f}")
+                with st.expander("📋 Detalles de la mejor señal", expanded=True):
+                    display_signal_details(best, with_trailing=True)
             else:
-                st.warning("No se pudieron obtener datos")
-        except Exception as e:
-            st.error(f"Error: {e}")
+                st.warning("No hay señales aprobadas en este momento.")
+
+    else:
+        st.info("Presiona 'Actualizar Ranking' para comenzar")
 
 # ============================================================
-# TAB 3: Backtesting (sistema principal)
+# TAB 3: Backtesting
 # ============================================================
 with tabs[2]:
     st.header("📈 Backtesting Completo")
@@ -574,7 +670,7 @@ with tabs[2]:
         st.info("Presiona el botón en la barra lateral para ejecutar el backtesting")
 
 # ============================================================
-# TAB 4: BTC/ETH/SOL (sistema principal)
+# TAB 4: BTC/ETH/SOL (análisis independiente)
 # ============================================================
 with tabs[3]:
     st.header("📊 Análisis Independiente: Bitcoin · Ethereum · Solana")
@@ -621,11 +717,11 @@ with tabs[3]:
             st.error(f"Error: {e}")
 
 # ============================================================
-# TAB 5: Optimización (sistema principal)
+# TAB 5: Optimización
 # ============================================================
 with tabs[4]:
     st.header("🧠 Laboratorio de Optimización (100 iteraciones)")
-    if run_optimization_btn:
+    if st.sidebar.button("🧠 Optimización", type="secondary", use_container_width=True):
         with st.spinner("🧠 Ejecutando optimización completa (100 iteraciones)..."):
             try:
                 from optimizer import OptimizationLab
@@ -672,7 +768,7 @@ with tabs[4]:
         st.info("Presiona el botón en la barra lateral para ejecutar la optimización completa")
 
 # ============================================================
-# TAB 6: Diagnóstico (sistema principal)
+# TAB 6: Diagnóstico
 # ============================================================
 with tabs[5]:
     st.header("📈 Diagnóstico del Mercado")
@@ -719,15 +815,23 @@ with tabs[5]:
         st.warning("No hay datos disponibles para el diagnóstico")
 
 # ============================================================
-# TAB 7: Exchanges & Wise (sistema principal)
+# TAB 7: Exchanges & Wise
 # ============================================================
 with tabs[6]:
     st.header("🏦 Exchanges y Wise Integration")
     st.subheader("📊 Exchanges Conectados")
     available = st.session_state.data_engine.get_available_exchanges()
-    from config import EXCHANGES
+    # Definir diccionario de exchanges local para evitar importar de config
+    EXCHANGES_CONFIG = {
+        'okx': {'type': 'swap'},
+        'kucoin': {'type': 'linear'},
+        'mexc': {'type': 'swap'},
+        'kraken': {'type': 'spot'},
+        'binance': {'type': 'spot'},
+        'bybit': {'type': 'linear'},
+    }
     for ex_id in available:
-        status = EXCHANGES.get(ex_id, {}).get('type', 'spot')
+        status = EXCHANGES_CONFIG.get(ex_id, {}).get('type', 'spot')
         st.write(f"✅ {ex_id} ({status})")
     st.subheader("📊 Activos por Exchange")
     from exchange_aggregator import ExchangeAggregator
@@ -765,33 +869,18 @@ with tabs[6]:
                 st.warning("No se pudo obtener la tasa de cambio")
 
 # ============================================================
-# TAB 8: Firm Signals Ω (nuevo motor de certificación)
+# TAB 8: Firm Signals Ω (placeholder)
 # ============================================================
 with tabs[7]:
-    if FIRM_SIGNALS_AVAILABLE:
-        render_firm_signals_panel()
-    else:
-        st.warning("⚠️ El módulo Firm Signals Ω no está instalado en el repositorio.")
-        st.info("""
-        ### Instalación de Firm Signals Ω
-        
-        Para habilitar este módulo, debes agregar la carpeta `firm_signals_omega` en la raíz del proyecto.
-        
-        Los archivos necesarios son:
-        - `firm_signals_omega/__init__.py`
-        - `firm_signals_omega/config.py`
-        - `firm_signals_omega/data_engine.py`
-        - `firm_signals_omega/certification_engine.py`
-        - `firm_signals_omega/assistant.py`
-        - `firm_signals_omega/signal_generator.py`
-        - `firm_signals_omega/ranking_engine.py`
-        - `firm_signals_omega/validator.py`
-        - `firm_signals_omega/macro_integration.py`
-        - `firm_signals_omega/streamlit_app.py`
-        - `firm_signals_omega/utils.py`
-        
-        Consulta la documentación para más detalles.
-        """)
+    st.header("🧸 Firm Signals Ω — Motor de Certificación")
+    st.info("El módulo Firm Signals Ω está en desarrollo. Requiere configuración adicional de fuentes de datos.")
+    st.markdown("""
+    **Estado:** No disponible
+    **Próximos pasos:**
+    - Configurar fuentes de datos alternativas (CoinGecko, Crypto.com, etc.)
+    - Implementar la lógica de certificación multinivel
+    - Validar con datos históricos
+    """)
 
 # ============================================================
 # FOOTER
