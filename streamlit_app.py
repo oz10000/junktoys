@@ -28,7 +28,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# ESTILOS (colorido y juguetón)
+# ESTILOS
 # ============================================================
 st.markdown("""
     <style>
@@ -103,35 +103,61 @@ with st.sidebar:
 # ============================================================
 if 'data_engine' not in st.session_state:
     st.session_state.data_engine = DataEngine()
-    # Intentar obtener activos certificados
-    with st.spinner("🔄 Certificando activos..."):
-        try:
-            st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
-        except Exception as e:
-            st.warning(f"Error en certificación: {e}. Usando fallback.")
-            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
-        if not st.session_state.certified_symbols:
-            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
-        st.session_state.symbols = st.session_state.certified_symbols
-        st.session_state.data_dict = {}
-        st.session_state.last_refresh = None
-        st.session_state.signal_history = []
+    try:
+        st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
+    except Exception as e:
+        st.warning(f"Error en certificación: {e}. Usando fallback.")
+        st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+    if not st.session_state.certified_symbols:
+        st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+    st.session_state.symbols = st.session_state.certified_symbols
+    st.session_state.data_dict = {}
+    st.session_state.last_refresh = None
+    st.session_state.signal_history = []
 
 # ============================================================
-# FUNCIÓN PARA ESCANEAR Y RANKEAR
+# FUNCIONES AUXILIARES
 # ============================================================
+def pad_list(items, target=10):
+    result = items[:target]
+    while len(result) < target:
+        result.append(None)
+    return result
+
+def estimate_time_for_symbol(symbol, score, is_valid, signal_history):
+    """Estima el tiempo restante para que se active una señal en este símbolo."""
+    # Si ya es válida, tiempo = 0
+    if is_valid:
+        return 0
+    # Buscar historial de este símbolo
+    hist = [s for s in signal_history if s.get('symbol') == symbol and s.get('is_valid', False)]
+    if len(hist) > 1:
+        intervals = [(hist[i+1]['timestamp'] - hist[i]['timestamp']).total_seconds() / 60 for i in range(len(hist)-1)]
+        if intervals:
+            avg_interval = np.mean(intervals)
+            # Si el score es alto, reducir estimación
+            reduction = abs(score) * 0.5
+            remaining = max(0, avg_interval * (1 - reduction))
+            return remaining
+    # Si no hay historial, estimar por score
+    if abs(score) > 0.3:
+        # Heurística: cuanto mayor el score, menos tiempo
+        base = 60  # 1 hora base
+        reduction = abs(score) * 0.6
+        remaining = max(5, base * (1 - reduction))
+        return remaining
+    return None
+
 def scan_and_rank():
     de = st.session_state.data_engine
     symbols = st.session_state.certified_symbols
     data_dict = {}
 
-    # Descargar datos para los activos certificados
     for sym in symbols[:30]:
         df = de.fetch_ohlcv(sym, limit=300)
         if df is not None and not df.empty:
             data_dict[sym] = df
         else:
-            # Intentar con otro exchange
             for alt_ex in ['kucoin', 'mexc', 'kraken']:
                 df = de.fetch_ohlcv(sym, limit=300, exchange_id=alt_ex)
                 if df is not None and not df.empty:
@@ -139,7 +165,6 @@ def scan_and_rank():
                     break
 
     if not data_dict:
-        logger.warning("No se obtuvieron datos, usando fallback")
         for sym in symbols[:10]:
             df = de.fetch_ohlcv(sym, limit=100)
             if df is not None and not df.empty:
@@ -148,24 +173,8 @@ def scan_and_rank():
     st.session_state.data_dict = data_dict
     st.session_state.last_refresh = datetime.now()
 
-    # Generar señales para todos los activos (aprobados o no)
     all_rankings = []
     valid_signals = []
-
-    # Calcular estadísticas históricas para estimación de tiempo
-    # (promedio de intervalos entre señales válidas)
-    time_stats = {}
-    for sym in data_dict.keys():
-        # Buscar en el historial de señales los intervalos para este símbolo
-        hist = [s for s in st.session_state.signal_history if s.get('symbol') == sym and s.get('is_valid', False)]
-        if len(hist) > 1:
-            intervals = [(hist[i+1]['timestamp'] - hist[i]['timestamp']).total_seconds() / 60 for i in range(len(hist)-1)]
-            if intervals:
-                time_stats[sym] = {
-                    'avg_interval': np.mean(intervals),
-                    'std_interval': np.std(intervals),
-                    'last_time': hist[-1]['timestamp']
-                }
 
     for sym, df in data_dict.items():
         s = Signal(sym, df, DEFAULT_PARAMS)
@@ -173,25 +182,8 @@ def scan_and_rank():
         ker_val = compute_ker(df, 10).iloc[-1] if not compute_ker(df).empty else 0
         atr_val = compute_atr(df).iloc[-1] if not compute_atr(df).empty else 0
         atr_pct = atr_val / s.entry_price * 100 if s.entry_price > 0 else 0
-        # Amplitud en USD = ATR, en % = atr_pct
-        amplitude_usd = atr_val
-        amplitude_pct = atr_pct
 
-        # Estimar tiempo hasta la próxima señal para este activo
-        estimated_time = None
-        if sym in time_stats:
-            last_time = time_stats[sym]['last_time']
-            avg_interval = time_stats[sym]['avg_interval']
-            elapsed = (datetime.now() - last_time).total_seconds() / 60
-            remaining = max(0, avg_interval - elapsed)
-            # Si la señal es válida, el tiempo restante es 0 (ya está activa)
-            if s.is_valid:
-                remaining = 0
-            # Si el score es alto pero no válida, podría estar cerca
-            elif abs(s.score) > 0.4:
-                # Ajuste heurístico: cuanto mayor el score, menor el tiempo restante
-                remaining *= (1 - abs(s.score))
-            estimated_time = max(0, remaining)
+        estimated_time = estimate_time_for_symbol(sym, s.score, s.is_valid, st.session_state.signal_history)
 
         rank_entry = {
             'symbol': sym,
@@ -200,8 +192,8 @@ def scan_and_rank():
             'adx': adx_val,
             'ker': ker_val,
             'atr_pct': atr_pct,
-            'amplitude_pct': amplitude_pct,
-            'amplitude_usd': amplitude_usd,
+            'amplitude_pct': atr_pct,
+            'amplitude_usd': atr_val,
             'direction': s.direction if s.is_valid else 'N/A',
             'is_valid': s.is_valid,
             'reason': s.reason if not s.is_valid else '✅ Aprobado',
@@ -215,7 +207,7 @@ def scan_and_rank():
             'break_even_trigger': s.break_even_trigger if s.is_valid else 0,
             'break_even_buffer': s.break_even_buffer if s.is_valid else 0,
             'max_hold_minutes': s.max_hold_minutes if s.is_valid else 0,
-            'estimated_time': estimated_time,  # minutos
+            'estimated_time': estimated_time,
         }
         all_rankings.append(rank_entry)
         if s.is_valid:
@@ -224,18 +216,6 @@ def scan_and_rank():
     all_rankings.sort(key=lambda x: abs(x['score']), reverse=True)
     return all_rankings, valid_signals
 
-# ============================================================
-# FUNCIÓN PARA PADEAR LISTAS A 10 ELEMENTOS
-# ============================================================
-def pad_list(items, target=10):
-    result = items[:target]
-    while len(result) < target:
-        result.append(None)
-    return result
-
-# ============================================================
-# ESTIMACIÓN DE TIEMPO HASTA PRÓXIMA SEÑAL (global)
-# ============================================================
 def estimate_next_signal_global(signal_history):
     if len(signal_history) < 3:
         return None
@@ -256,9 +236,6 @@ def estimate_next_signal_global(signal_history):
         'confidence': 1 - (std_interval / avg_interval) if avg_interval > 0 else 0
     }
 
-# ============================================================
-# FUNCIÓN PARA MOSTRAR DETALLES COMPLETOS DE UNA SEÑAL
-# ============================================================
 def display_signal_details(r, with_trailing=True):
     if not r['is_valid']:
         st.json({
@@ -291,6 +268,13 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"TP: ${r['tp_price']:.4f} ({r['tp_price']/r['entry_price']-1:.2%})")
         st.write(f"Break Even Trigger: {r['break_even_trigger']:.2%}")
         st.write(f"Tiempo máx: {r['max_hold_minutes']} min")
+        if r['estimated_time'] is not None:
+            if r['estimated_time'] < 1:
+                st.write(f"⏳ Tiempo estimado para activación: < 1 min")
+            elif r['estimated_time'] < 60:
+                st.write(f"⏳ Tiempo estimado para activación: {int(r['estimated_time'])} min")
+            else:
+                st.write(f"⏳ Tiempo estimado para activación: {r['estimated_time']/60:.1f} h")
 
     if with_trailing:
         st.markdown("---")
@@ -309,7 +293,7 @@ def display_signal_details(r, with_trailing=True):
             st.write(f"SL trailing: ${r['entry_price'] * (1 - r['trailing_distance']):.4f}")
 
 # ============================================================
-# PESTAÑAS (8 pestañas, incluyendo Firm Signals Ω)
+# PESTAÑAS (8 tabs)
 # ============================================================
 tab_names = [
     "📊 Trade Óptimo",
@@ -432,15 +416,19 @@ with tabs[0]:
                                     st.write(f"  ${res:.2f} (calidad: {qual:.2f})")
                         st.subheader("📊 Zonas de Entrada")
                         from amplitude_analyzer import define_zones
-                        zones = define_zones(trade.amplitudes.get('avg_candle_range', 0.5), trade.entry_price)
-                        for zone_name, zone_data in zones.items():
-                            color = ENTRY_ZONES.get(zone_name, {}).get('color', '#888')
-                            st.markdown(f"""
-                            <div class="trade-card zone-{zone_name.lower()}">
-                                <b>Zona {zone_name}</b>: ${zone_data['support']:.2f} — ${zone_data['resistance']:.2f}
-                                <br><small>{ENTRY_ZONES.get(zone_name, {}).get('desc', '')}</small>
-                            </div>
-                            """, unsafe_allow_html=True)
+                        avg_range = trade.amplitudes.get('avg_candle_range', 0.5)
+                        zones = define_zones(avg_range, trade.entry_price)
+                        # Asegurar que zones es un diccionario válido
+                        if isinstance(zones, dict):
+                            for zone_name, zone_data in zones.items():
+                                if isinstance(zone_data, dict):
+                                    color = ENTRY_ZONES.get(zone_name, {}).get('color', '#888')
+                                    st.markdown(f"""
+                                    <div class="trade-card zone-{zone_name.lower()}">
+                                        <b>Zona {zone_name}</b>: ${zone_data.get('support', 0):.2f} — ${zone_data.get('resistance', 0):.2f}
+                                        <br><small>{ENTRY_ZONES.get(zone_name, {}).get('desc', '')}</small>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                     else:
                         st.warning("No hay trades óptimos en este momento")
                 else:
@@ -469,7 +457,7 @@ with tabs[0]:
             st.info("⏳ No hay suficientes datos para estimar la próxima oportunidad")
 
 # ============================================================
-# TAB 2: Ranking Completo
+# TAB 2: Ranking Completo (con tiempo estimado y amplitud)
 # ============================================================
 with tabs[1]:
     st.header("🏆 Ranking Completo — Top 10 Long / Short")
@@ -517,7 +505,6 @@ with tabs[1]:
                     if r is None:
                         data_long.append({'Pos': i+1, 'Activo': 'N/A', 'Score': 'N/A', 'ADX': 'N/A', 'KER': 'N/A', 'Amplitud%': 'N/A', 'Amplitud$': 'N/A', 'Tiempo estimado': 'N/A', 'Aprobado': 'N/A', 'Motivo': 'No hay suficientes longs'})
                     else:
-                        # Formatear tiempo estimado
                         if r['estimated_time'] is not None:
                             if r['estimated_time'] < 1:
                                 time_str = "< 1 min"
@@ -670,7 +657,7 @@ with tabs[2]:
         st.info("Presiona el botón en la barra lateral para ejecutar el backtesting")
 
 # ============================================================
-# TAB 4: BTC/ETH/SOL (análisis independiente)
+# TAB 4: BTC/ETH/SOL
 # ============================================================
 with tabs[3]:
     st.header("📊 Análisis Independiente: Bitcoin · Ethereum · Solana")
@@ -721,7 +708,7 @@ with tabs[3]:
 # ============================================================
 with tabs[4]:
     st.header("🧠 Laboratorio de Optimización (100 iteraciones)")
-    if st.sidebar.button("🧠 Optimización", type="secondary", use_container_width=True):
+    if st.button("🧠 Ejecutar Optimización", type="secondary"):
         with st.spinner("🧠 Ejecutando optimización completa (100 iteraciones)..."):
             try:
                 from optimizer import OptimizationLab
@@ -746,26 +733,15 @@ with tabs[4]:
                     col4.metric("⭐ Sharpe", f"{results['best_metrics'].get('sharpe', 0):.2f}")
                     st.subheader("📋 Parámetros Óptimos")
                     st.json(results['best_params'])
-                    if lab.tracking['winrates']:
-                        fig = px.line(x=lab.tracking['iterations'], y=lab.tracking['winrates'],
+                    if 'tracking' in results and 'winrates' in results['tracking']:
+                        fig = px.line(x=results['tracking']['iterations'], y=results['tracking']['winrates'],
                                       title="📈 Evolución del Win Rate durante la optimización")
                         fig.update_layout(yaxis_tickformat='.0%')
                         st.plotly_chart(fig, use_container_width=True)
-                    if results.get('walk_forward'):
-                        st.subheader("📊 Walk-Forward Validation")
-                        wf_df = pd.DataFrame(results['walk_forward'])
-                        st.dataframe(wf_df, width='stretch')
-                    if results.get('monte_carlo'):
-                        st.subheader("🎰 Monte Carlo (1000 simulaciones)")
-                        mc = results['monte_carlo']
-                        col1, col2, col3 = st.columns(3)
-                        col1.metric("Capital final medio", format_currency(mc.get('mean_final_capital', 0)))
-                        col2.metric("Probabilidad de ruina", f"{mc.get('ruin_prob', 0):.2%}")
-                        col3.metric("Drawdown medio", f"{mc.get('mean_max_dd', 0):.2%}")
             except Exception as e:
                 st.error(f"Error en optimización: {e}")
     else:
-        st.info("Presiona el botón en la barra lateral para ejecutar la optimización completa")
+        st.info("Presiona el botón para ejecutar la optimización completa")
 
 # ============================================================
 # TAB 6: Diagnóstico
@@ -815,40 +791,14 @@ with tabs[5]:
         st.warning("No hay datos disponibles para el diagnóstico")
 
 # ============================================================
-# TAB 7: Exchanges & Wise
+# TAB 7: Exchanges & Wise (sin ExchangeAggregator)
 # ============================================================
 with tabs[6]:
     st.header("🏦 Exchanges y Wise Integration")
     st.subheader("📊 Exchanges Conectados")
     available = st.session_state.data_engine.get_available_exchanges()
-    # Definir diccionario de exchanges local para evitar importar de config
-    EXCHANGES_CONFIG = {
-        'okx': {'type': 'swap'},
-        'kucoin': {'type': 'linear'},
-        'mexc': {'type': 'swap'},
-        'kraken': {'type': 'spot'},
-        'binance': {'type': 'spot'},
-        'bybit': {'type': 'linear'},
-    }
-    for ex_id in available:
-        status = EXCHANGES_CONFIG.get(ex_id, {}).get('type', 'spot')
-        st.write(f"✅ {ex_id} ({status})")
-    st.subheader("📊 Activos por Exchange")
-    from exchange_aggregator import ExchangeAggregator
-    aggregator = ExchangeAggregator(st.session_state.data_engine)
-    summary = aggregator.get_asset_summary()
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Activos", summary['total'])
-    col2.metric("Aprobados", summary['approved'])
-    col3.metric("Recomendados", summary['recommended'])
-    col4.metric("Rechazados", summary['rejected'])
-    st.write("**Detalle por exchange:**")
-    for ex_id, count in summary['by_exchange'].items():
-        st.write(f"  {ex_id}: {count} activos")
-    with st.expander("📋 Tabla de Activos por Exchange"):
-        df_assets = aggregator.display_asset_table()
-        st.dataframe(df_assets, width='stretch')
-    st.markdown("---")
+    st.write(f"Exchanges disponibles: {', '.join(available)}")
+    st.write("---")
     st.subheader("💱 Wise Integration — Monedas Soportadas")
     from wise_integration import WiseIntegration
     wise = WiseIntegration()
