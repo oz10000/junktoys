@@ -77,17 +77,24 @@ DEFAULT_PARAMS = {
 # ============================================================
 # PARÁMETROS POR ACTIVO (para compatibilidad con scripts legacy)
 # ============================================================
-ASSET_PARAMS = {}  # <--- AHORA EXISTE para que no falle el import
+ASSET_PARAMS = {}
 
 # ============================================================
-# CRITERIOS DE CERTIFICACIÓN (ajustados para ser más realistas)
+# CRITERIOS DE CERTIFICACIÓN
 # ============================================================
 CERTIFICATION_CRITERIA = {
-    'min_win_rate': 0.45,        # reducido de 0.50
-    'min_profit_factor': 1.05,   # reducido de 1.10
-    'max_drawdown': 0.30,        # aumentado de 0.25
-    'min_trades': 10,            # reducido de 20
+    'min_win_rate': 0.45,
+    'min_profit_factor': 1.05,
+    'max_drawdown': 0.30,
+    'min_trades': 10,
 }
+
+# ============================================================
+# UNIVERSE — SE LLENA AUTOMÁTICAMENTE POR DATA_ENGINE
+# ============================================================
+UNIVERSE = []                 # <--- AHORA EXISTE
+UNIVERSE_BY_EXCHANGE = {}     # <--- AHORA EXISTE
+MAX_LEVERAGE_BY_ASSET = {}
 
 # ============================================================
 # PESOS DEL SCORING
