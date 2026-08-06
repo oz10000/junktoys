@@ -12,6 +12,7 @@ from .helpers import (
     format_signal_reason
 )
 from .streamlit_panel import render_firm_signals_panel
+from .next_trade_engine import NextTradeEngine
 
 __all__ = [
     'FIRM_SIGNALS_CONFIG',
@@ -19,5 +20,6 @@ __all__ = [
     'calculate_support_resistance',
     'suggest_leverage',
     'format_signal_reason',
-    'render_firm_signals_panel'
+    'render_firm_signals_panel',
+    'NextTradeEngine'
 ]
