@@ -1,0 +1,31 @@
+# .github/workflows/verify_exchanges_unified.yml
+name: 🔬 Verificación Unificada de Exchanges para Firm Signals Ω
+
+on:
+  workflow_dispatch:        # Ejecución manual
+  schedule:
+    - cron: '0 */12 * * *'   # Cada 12 horas
+
+jobs:
+  verify-all-exchanges:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Instalar dependencias
+        run: |
+          pip install ccxt pandas numpy requests yfinance
+      
+      - name: Ejecutar verificación unificada
+        run: python scripts/verify_exchanges.py
+      
+      - name: Subir reporte unificado
+        uses: actions/upload-artifact@v4
+        with:
+          name: exchange-verification-report
+          path: exchange_verification_report.json
