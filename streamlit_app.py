@@ -10,7 +10,8 @@ import logging
 from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
-    TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS
+    TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS,
+    EXCHANGES  # <--- AHORA IMPORTADO CORRECTAMENTE
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
@@ -28,7 +29,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# ESTILOS
+# ESTILOS (colorido y juguetón)
 # ============================================================
 st.markdown("""
     <style>
@@ -103,20 +104,21 @@ with st.sidebar:
 # ============================================================
 if 'data_engine' not in st.session_state:
     st.session_state.data_engine = DataEngine()
-    try:
-        st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
-    except Exception as e:
-        st.warning(f"Error en certificación: {e}. Usando fallback.")
-        st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
-    if not st.session_state.certified_symbols:
-        st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
-    st.session_state.symbols = st.session_state.certified_symbols
-    st.session_state.data_dict = {}
-    st.session_state.last_refresh = None
-    st.session_state.signal_history = []
+    with st.spinner("🔄 Certificando activos..."):
+        try:
+            st.session_state.certified_symbols = st.session_state.data_engine.get_certified_assets()
+        except Exception as e:
+            st.warning(f"Error en certificación: {e}. Usando fallback.")
+            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+        if not st.session_state.certified_symbols:
+            st.session_state.certified_symbols = FALLBACK_SYMBOLS[:10]
+        st.session_state.symbols = st.session_state.certified_symbols
+        st.session_state.data_dict = {}
+        st.session_state.last_refresh = None
+        st.session_state.signal_history = []
 
 # ============================================================
-# FUNCIONES AUXILIARES
+# FUNCIONES
 # ============================================================
 def pad_list(items, target=10):
     result = items[:target]
@@ -125,27 +127,19 @@ def pad_list(items, target=10):
     return result
 
 def estimate_time_for_symbol(symbol, score, is_valid, signal_history):
-    """Estima el tiempo restante para que se active una señal en este símbolo."""
-    # Si ya es válida, tiempo = 0
     if is_valid:
         return 0
-    # Buscar historial de este símbolo
     hist = [s for s in signal_history if s.get('symbol') == symbol and s.get('is_valid', False)]
     if len(hist) > 1:
         intervals = [(hist[i+1]['timestamp'] - hist[i]['timestamp']).total_seconds() / 60 for i in range(len(hist)-1)]
         if intervals:
             avg_interval = np.mean(intervals)
-            # Si el score es alto, reducir estimación
             reduction = abs(score) * 0.5
-            remaining = max(0, avg_interval * (1 - reduction))
-            return remaining
-    # Si no hay historial, estimar por score
+            return max(0, avg_interval * (1 - reduction))
     if abs(score) > 0.3:
-        # Heurística: cuanto mayor el score, menos tiempo
-        base = 60  # 1 hora base
+        base = 60
         reduction = abs(score) * 0.6
-        remaining = max(5, base * (1 - reduction))
-        return remaining
+        return max(5, base * (1 - reduction))
     return None
 
 def scan_and_rank():
@@ -270,7 +264,7 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"Tiempo máx: {r['max_hold_minutes']} min")
         if r['estimated_time'] is not None:
             if r['estimated_time'] < 1:
-                st.write(f"⏳ Tiempo estimado para activación: < 1 min")
+                st.write("⏳ Tiempo estimado para activación: < 1 min")
             elif r['estimated_time'] < 60:
                 st.write(f"⏳ Tiempo estimado para activación: {int(r['estimated_time'])} min")
             else:
@@ -418,7 +412,6 @@ with tabs[0]:
                         from amplitude_analyzer import define_zones
                         avg_range = trade.amplitudes.get('avg_candle_range', 0.5)
                         zones = define_zones(avg_range, trade.entry_price)
-                        # Asegurar que zones es un diccionario válido
                         if isinstance(zones, dict):
                             for zone_name, zone_data in zones.items():
                                 if isinstance(zone_data, dict):
@@ -457,7 +450,7 @@ with tabs[0]:
             st.info("⏳ No hay suficientes datos para estimar la próxima oportunidad")
 
 # ============================================================
-# TAB 2: Ranking Completo (con tiempo estimado y amplitud)
+# TAB 2: Ranking Completo
 # ============================================================
 with tabs[1]:
     st.header("🏆 Ranking Completo — Top 10 Long / Short")
@@ -485,7 +478,6 @@ with tabs[1]:
         if not all_rankings:
             st.warning("No se encontraron señales. Intenta actualizar.")
         else:
-            # Separar Long y Short
             longs = [r for r in all_rankings if r['direction'] == 'Long' or (r['direction'] == 'N/A' and r['score'] > 0)]
             shorts = [r for r in all_rankings if r['direction'] == 'Short' or (r['direction'] == 'N/A' and r['score'] < 0)]
 
@@ -791,13 +783,15 @@ with tabs[5]:
         st.warning("No hay datos disponibles para el diagnóstico")
 
 # ============================================================
-# TAB 7: Exchanges & Wise (sin ExchangeAggregator)
+# TAB 7: Exchanges & Wise
 # ============================================================
 with tabs[6]:
     st.header("🏦 Exchanges y Wise Integration")
     st.subheader("📊 Exchanges Conectados")
     available = st.session_state.data_engine.get_available_exchanges()
-    st.write(f"Exchanges disponibles: {', '.join(available)}")
+    for ex_id in available:
+        status = EXCHANGES.get(ex_id, {}).get('type', 'spot')
+        st.write(f"✅ {ex_id} ({status})")
     st.write("---")
     st.subheader("💱 Wise Integration — Monedas Soportadas")
     from wise_integration import WiseIntegration
@@ -819,7 +813,7 @@ with tabs[6]:
                 st.warning("No se pudo obtener la tasa de cambio")
 
 # ============================================================
-# TAB 8: Firm Signals Ω (placeholder)
+# TAB 8: Firm Signals Ω
 # ============================================================
 with tabs[7]:
     st.header("🧸 Firm Signals Ω — Motor de Certificación")
