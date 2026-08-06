@@ -1,0 +1,24 @@
+name: 🧸 Firm Signals Ω — Análisis en Consola
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # cada 6 horas
+
+jobs:
+  firm-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Instalar dependencias
+        run: |
+          pip install ccxt pandas numpy requests yfinance
+      - name: Ejecutar análisis Firm Signals Ω
+        run: python firm_signals_omega/firm_analysis.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firm-signals-report
+          path: firm_signals_report.json
