@@ -1,20 +1,23 @@
 # firm_signals_omega/__init__.py
 """
-Firm Signals Ω — Motor de Certificación de Señales
+Firm Signals Ω — Capa de visualización y análisis contextual
+Basado en las señales existentes del motor principal.
 """
 
 from .config import FIRM_SIGNALS_CONFIG
+from .helpers import (
+    estimate_next_opportunity,
+    calculate_support_resistance,
+    suggest_leverage,
+    format_signal_reason
+)
+from .streamlit_panel import render_firm_signals_panel
 
-# Intentar importar proveedores
-try:
-    from .data_providers import FirmDataProvider
-except ImportError:
-    try:
-        from .providers import FirmDataProvider
-    except ImportError:
-        # Si no hay proveedores, definimos uno dummy (para evitar errores)
-        class FirmDataProvider:
-            def get_ohlcv(self, symbol, timeframe='5m', limit=300):
-                raise NotImplementedError("No data provider available")
-
-__all__ = ['FIRM_SIGNALS_CONFIG', 'FirmDataProvider']
+__all__ = [
+    'FIRM_SIGNALS_CONFIG',
+    'estimate_next_opportunity',
+    'calculate_support_resistance',
+    'suggest_leverage',
+    'format_signal_reason',
+    'render_firm_signals_panel'
+]
