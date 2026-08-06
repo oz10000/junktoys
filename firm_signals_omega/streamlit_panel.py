@@ -37,7 +37,6 @@ def render_firm_signals_panel():
 
     # Obtener historial de señales
     signal_history = st.session_state.get('signal_history', [])
-    # Obtener historial de Firm Signals (si existe)
     firm_history = st.session_state.get('firm_signal_history', [])
 
     if not best:
@@ -56,18 +55,15 @@ def render_firm_signals_panel():
     tp_price = best.get('tp_price', 0)
 
     # === ESTIMACIÓN DE TIEMPO CON NEXT TRADE ENGINE ===
-    # Inicializar motor
     engine = NextTradeEngine({})
     engine.update_history(signal_history, firm_history)
 
-    # Obtener variables actuales
     adx = best.get('adx', 20)
     atr_pct = best.get('atr_pct', 0.1)
     now = datetime.now()
-    current_minute = (now.minute % 5)  # minutos dentro de la vela de 5m
+    current_minute = (now.minute % 5)
     last_signal_time = signal_history[-1]['timestamp'] if signal_history else None
 
-    # Estimar para Trade Óptimo y Firm Signals
     result_opt = engine.estimate(regime, adx, atr_pct, current_minute, last_signal_time, is_firm=False)
     result_firm = engine.estimate(regime, adx, atr_pct, current_minute, last_signal_time, is_firm=True)
 
@@ -78,6 +74,13 @@ def render_firm_signals_panel():
     # === APALANCAMIENTO SUGERIDO ===
     atr_pct_decimal = best.get('atr_pct', 0.01) / 100
     lev = suggest_leverage(atr_pct_decimal, confidence, max_leverage=10, min_leverage=1)
+
+    # === AMPLITUD MULTI-TIMEFRAME ===
+    # Obtener amplitudes de diferentes timeframes si es posible
+    amp_5m = best.get('amplitude_pct', 0)
+    # Estimaciones heurísticas para timeframes superiores
+    amp_1h = amp_5m * 3.5
+    amp_4h = amp_5m * 7.0
 
     # === MOSTRAR PANEL ===
 
@@ -136,6 +139,17 @@ def render_firm_signals_panel():
             st.metric("Resistencia", format_currency(sr['resistance']) if sr['resistance'] else "N/A",
                      delta=f"{sr['distance_resistance']:.2f}% por encima" if sr['distance_resistance'] else None)
 
+    # Amplitud multi-timeframe
+    st.markdown("---")
+    st.subheader("📊 Amplitud por Timeframe")
+    col_a1, col_a2, col_a3 = st.columns(3)
+    with col_a1:
+        st.metric("5m", f"{amp_5m:.2f}%")
+    with col_a2:
+        st.metric("1h", f"{amp_1h:.2f}% (estimado)")
+    with col_a3:
+        st.metric("4h", f"{amp_4h:.2f}% (estimado)")
+
     # Razón de aprobación
     if is_valid:
         st.markdown("---")
@@ -164,7 +178,9 @@ def render_firm_signals_panel():
             "ADX": best.get('adx', 0),
             "KER": best.get('ker', 0),
             "ATR%": best.get('atr_pct', 0),
-            "Amplitud": best.get('amplitude_pct', 0),
+            "Amplitud 5m": amp_5m,
+            "Amplitud 1h": amp_1h,
+            "Amplitud 4h": amp_4h,
             "Tasa de llegada (señales/min)": f"{result_opt['rate_per_minute']:.4f}",
             "Confianza de estimación": f"{result_opt['confidence']*100:.0f}%",
             "Estado semáforo": result_opt['status'],
