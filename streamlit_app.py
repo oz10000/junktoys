@@ -11,7 +11,7 @@ from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
     TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS,
-    EXCHANGES  # <--- FIRM_SIGNALS_CONFIG ELIMINADO DE AQUÍ
+    EXCHANGES
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
@@ -116,6 +116,7 @@ if 'data_engine' not in st.session_state:
         st.session_state.data_dict = {}
         st.session_state.last_refresh = None
         st.session_state.signal_history = []
+        st.session_state.firm_signal_history = []  # <-- AÑADIDO
 
 # ============================================================
 # FUNCIONES AUXILIARES
@@ -416,6 +417,7 @@ with tabs[0]:
                         from amplitude_analyzer import define_zones
                         avg_range = trade.amplitudes.get('avg_candle_range', 0.5)
                         zones = define_zones(avg_range, trade.entry_price)
+                        # CORRECCIÓN: iterar correctamente sobre el diccionario
                         if isinstance(zones, dict):
                             for zone_name, zone_data in zones.items():
                                 if isinstance(zone_data, dict):
@@ -820,7 +822,7 @@ with tabs[6]:
                 st.warning("No se pudo obtener la tasa de cambio")
 
 # ============================================================
-# TAB 8 — FIRM SIGNALS Ω (NUEVO PANEL)
+# TAB 8 — FIRM SIGNALS Ω
 # ============================================================
 with tabs[7]:
     st.header("🧸 Firm Signals Ω — Panel de Ejecución")
