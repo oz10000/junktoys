@@ -1,29 +1,15 @@
 # firm_signals_omega/__init__.py
 """
-FIRM SIGNALS Ω — Motor de Certificación de Señales de Máxima Calidad
-
-Este módulo proporciona un motor independiente de certificación de señales
-que opera con estándares extremadamente exigentes. Solo publica señales
-cuando existe una convergencia extraordinaria de factores.
+Firm Signals Ω — Módulo de Certificación de Señales
 """
 
-__version__ = "1.0.0"
-__author__ = "Junk Toys Research Lab"
+# Intentar importar el proveedor de datos
+try:
+    from .data_providers import FirmDataProvider
+except ImportError:
+    from .providers import FirmDataProvider  # fallback
 
+# Exponer config
 from .config import FIRM_SIGNALS_CONFIG
-from .data_engine import FirmDataEngine
-from .certification_engine import CertificationEngine
-from .assistant import ExecutionAssistant
-from .signal_generator import SignalGenerator
-from .ranking_engine import RankingEngine
-from .validator import Validator
 
-__all__ = [
-    'FIRM_SIGNALS_CONFIG',
-    'FirmDataEngine',
-    'CertificationEngine',
-    'ExecutionAssistant',
-    'SignalGenerator',
-    'RankingEngine',
-    'Validator'
-]
+__all__ = ['FIRM_SIGNALS_CONFIG', 'FirmDataProvider']
