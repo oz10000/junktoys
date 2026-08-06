@@ -8,8 +8,7 @@ import pickle
 import hashlib
 import logging
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from typing import Dict, List, Optional, Tuple
 from config import (
     EXCHANGE_PRIORITY, EXCHANGE_CONFIGS, FALLBACK_SYMBOLS,
     CACHE_DIR, OHLCV_DIR, TIMEFRAME, LOOKBACK_DAYS,
@@ -20,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class DataEngine:
-    """Motor de datos con certificación de activos mediante backtesting"""
+    """Motor de datos con caché, validación de integridad y certificación de activos."""
 
     def __init__(self, exchanges=None):
         os.makedirs(OHLCV_DIR, exist_ok=True)
@@ -46,8 +45,10 @@ class DataEngine:
 
         logger.info(f"✅ DataEngine listo. Primary: {self.primary}")
 
+    # ========================================================================
+    # CONEXIÓN Y GESTIÓN DE EXCHANGES
+    # ========================================================================
     def _connect_exchange(self, ex_id):
-        """Conecta a un exchange con reintentos"""
         for attempt in range(3):
             try:
                 ex_class = getattr(ccxt, ex_id)
@@ -92,18 +93,15 @@ class DataEngine:
     def get_available_exchanges(self):
         return [ex_id for ex_id, ex in self.exchanges.items() if ex is not None]
 
+    # ========================================================================
+    # CERTIFICACIÓN DE ACTIVOS
+    # ========================================================================
     def get_certified_assets(self, force_refresh=False):
-        """
-        Obtiene la lista de activos que han pasado la certificación mediante backtesting.
-        Retorna solo los símbolos que cumplen los criterios de Win Rate, Profit Factor, etc.
-        """
-        # Cache por 1 hora
         if not force_refresh and self._certified_assets is not None:
             if self._certified_assets_timestamp and (datetime.now() - self._certified_assets_timestamp).seconds < 3600:
                 logger.info(f"📦 Usando caché de certificación: {len(self._certified_assets)} activos")
                 return self._certified_assets
 
-        # Obtener universo completo
         all_symbols = self.get_common_pairs(max_pairs=200, force_refresh=force_refresh)
         logger.info(f"🔍 Evaluando {len(all_symbols)} activos para certificación...")
 
@@ -111,17 +109,16 @@ class DataEngine:
         evaluated = 0
         passed = 0
 
-        for sym in all_symbols[:50]:  # Limitamos a 50 para velocidad
+        from backtester import Backtester
+        from config import DEFAULT_PARAMS, INITIAL_CAPITAL
+
+        for sym in all_symbols[:50]:
             try:
                 logger.info(f"📊 Certificando {sym}...")
-                df = self.fetch_historical(sym, days=180)  # 180 días para más datos
+                df = self.fetch_historical(sym, days=180)
                 if df is None or df.empty:
                     logger.warning(f"⚠️ {sym}: sin datos históricos")
                     continue
-
-                # Backtest rápido con parámetros por defecto
-                from backtester import Backtester
-                from config import DEFAULT_PARAMS, INITIAL_CAPITAL
 
                 bt = Backtester({sym: df}, {'__global__': DEFAULT_PARAMS}, INITIAL_CAPITAL)
                 _, trades, _ = bt.run()
@@ -134,7 +131,6 @@ class DataEngine:
 
                 evaluated += 1
 
-                # Criterios
                 criteria_ok = (
                     win_rate >= CERTIFICATION_CRITERIA['min_win_rate'] and
                     profit_factor >= CERTIFICATION_CRITERIA['min_profit_factor'] and
@@ -154,7 +150,6 @@ class DataEngine:
 
         logger.info(f"📊 Certificación completada: {passed}/{evaluated} activos aprobados")
 
-        # Si no hay certificados, usar fallback
         if not certified:
             logger.warning("⚠️ No se encontraron activos certificados. Usando FALLBACK_SYMBOLS.")
             certified = FALLBACK_SYMBOLS[:20]
@@ -164,8 +159,10 @@ class DataEngine:
         logger.info(f"✅ {len(certified)} activos en el universo operativo")
         return certified
 
+    # ========================================================================
+    # OBTENCIÓN DE PARES COMUNES
+    # ========================================================================
     def get_common_pairs(self, min_volume_usd=0, max_pairs=500, force_refresh=False):
-        """Obtiene la intersección de pares USDT entre todos los exchanges."""
         if not force_refresh and self._universe_cache is not None:
             return self._universe_cache
 
@@ -180,8 +177,7 @@ class DataEngine:
                 logger.info(f"📊 Obteniendo pares de {ex_id}...")
                 markets = exchange.load_markets()
                 pairs = []
-                config = EXCHANGE_CONFIGS.get(ex_id, {})
-                ex_type = config.get('type', 'spot')
+                ex_type = EXCHANGE_CONFIGS.get(ex_id, {}).get('type', 'spot')
 
                 for symbol, market in markets.items():
                     if not symbol.endswith('/USDT') and not symbol.endswith('USDT'):
@@ -239,8 +235,17 @@ class DataEngine:
         logger.info(f"✅ Universo consolidado: {len(common)} pares comunes")
         return common
 
+    def _get_best_exchange_for_symbol(self, symbol):
+        if symbol in self._universe_by_exchange:
+            for ex_id in EXCHANGE_PRIORITY:
+                if symbol in self._universe_by_exchange.get(ex_id, []):
+                    return ex_id
+        return self.primary
+
+    # ========================================================================
+    # DESCARGA DE DATOS CON CACHÉ Y CHECKSUM
+    # ========================================================================
     def fetch_ohlcv(self, symbol, timeframe=TIMEFRAME, limit=300, exchange_id=None, force_refresh=False):
-        """Descarga OHLCV con caché y soporte multi-exchange."""
         ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
         exchange = self.exchanges.get(ex_id)
 
@@ -256,15 +261,21 @@ class DataEngine:
 
         cache_key = hashlib.md5(f"{symbol}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
         cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+        meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
 
-        if not force_refresh and os.path.exists(cache_path):
+        if not force_refresh and os.path.exists(cache_path) and os.path.exists(meta_path):
             try:
-                with open(cache_path, 'rb') as f:
-                    df = pickle.load(f)
+                with open(meta_path, 'r') as f:
+                    stored_checksum = f.read().strip()
+                df = pd.read_pickle(cache_path)  # Usamos pickle para compatibilidad
                 if not df.empty:
-                    return df
-            except:
-                pass
+                    current_checksum = self._compute_checksum(df)
+                    if current_checksum == stored_checksum:
+                        return df
+                    else:
+                        logger.warning(f"⚠️ Checksum incorrecto para {symbol}. Re-descargando.")
+            except Exception as e:
+                logger.warning(f"Error leyendo caché {symbol}: {e}")
 
         try:
             markets = exchange.load_markets()
@@ -283,8 +294,12 @@ class DataEngine:
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
 
+            # Guardar con checksum
+            checksum = self._compute_checksum(df)
             with open(cache_path, 'wb') as f:
                 pickle.dump(df, f)
+            with open(meta_path, 'w') as f:
+                f.write(checksum)
 
             logger.info(f"✅ {len(df)} velas para {symbol} desde {ex_id}")
             return df
@@ -293,15 +308,7 @@ class DataEngine:
             logger.warning(f"Error en {ex_id} para {symbol}: {e}")
             return None
 
-    def _get_best_exchange_for_symbol(self, symbol):
-        if symbol in self._universe_by_exchange:
-            for ex_id in EXCHANGE_PRIORITY:
-                if symbol in self._universe_by_exchange.get(ex_id, []):
-                    return ex_id
-        return self.primary
-
     def fetch_historical(self, symbol, timeframe=TIMEFRAME, days=LOOKBACK_DAYS, exchange_id=None):
-        """Descarga histórico completo."""
         ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
         exchange = self.exchanges.get(ex_id)
         if exchange is None:
@@ -335,6 +342,13 @@ class DataEngine:
         except Exception as e:
             logger.error(f"Error en histórico de {symbol}: {e}")
             return None
+
+    # ========================================================================
+    # CHECKSUM
+    # ========================================================================
+    def _compute_checksum(self, df: pd.DataFrame) -> str:
+        """Calcula checksum SHA256 de un DataFrame para verificación de integridad."""
+        return hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
 
     def clear_cache(self):
         self._cache.clear()
