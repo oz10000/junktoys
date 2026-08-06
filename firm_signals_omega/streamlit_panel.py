@@ -1,7 +1,7 @@
 # firm_signals_omega/streamlit_panel.py
 """
 Panel de Streamlit para Firm Signals Ω
-Muestra información contextual sobre la mejor señal actual y estimaciones.
+Muestra información contextual sobre la mejor señal actual y estimaciones dinámicas.
 """
 
 import streamlit as st
@@ -15,10 +15,11 @@ from .helpers import (
     suggest_leverage,
     format_signal_reason
 )
+from .next_trade_engine import NextTradeEngine
 from utils import format_currency
 
 def render_firm_signals_panel():
-    """Renderiza el panel de Firm Signals Ω"""
+    """Renderiza el panel de Firm Signals Ω con estimación de tiempo dinámica."""
 
     st.header("🧸 Firm Signals Ω — Panel de Ejecución")
 
@@ -36,6 +37,8 @@ def render_firm_signals_panel():
 
     # Obtener historial de señales
     signal_history = st.session_state.get('signal_history', [])
+    # Obtener historial de Firm Signals (si existe)
+    firm_history = st.session_state.get('firm_signal_history', [])
 
     if not best:
         st.warning("No hay señales disponibles en el ranking.")
@@ -52,27 +55,55 @@ def render_firm_signals_panel():
     sl_price = best.get('sl_price', 0)
     tp_price = best.get('tp_price', 0)
 
-    # === ESTIMACIÓN DE TIEMPO ===
-    estimation = estimate_next_opportunity(best, signal_history)
+    # === ESTIMACIÓN DE TIEMPO CON NEXT TRADE ENGINE ===
+    # Inicializar motor
+    engine = NextTradeEngine({})
+    engine.update_history(signal_history, firm_history)
+
+    # Obtener variables actuales
+    adx = best.get('adx', 20)
+    atr_pct = best.get('atr_pct', 0.1)
+    now = datetime.now()
+    current_minute = (now.minute % 5)  # minutos dentro de la vela de 5m
+    last_signal_time = signal_history[-1]['timestamp'] if signal_history else None
+
+    # Estimar para Trade Óptimo y Firm Signals
+    result_opt = engine.estimate(regime, adx, atr_pct, current_minute, last_signal_time, is_firm=False)
+    result_firm = engine.estimate(regime, adx, atr_pct, current_minute, last_signal_time, is_firm=True)
 
     # === SOPORTES Y RESISTENCIAS ===
     df = st.session_state.data_dict.get(symbol) if 'data_dict' in st.session_state else None
     sr = calculate_support_resistance(df, entry_price) if df is not None else {}
 
     # === APALANCAMIENTO SUGERIDO ===
-    atr_pct = best.get('atr_pct', 0.01) / 100  # convertimos a decimal
-    lev = suggest_leverage(atr_pct, confidence, max_leverage=10, min_leverage=1)
-
-    # === VENTANA DE VALIDEZ ===
-    validity_window = "15 - 25 minutos" if is_valid else "N/A"
+    atr_pct_decimal = best.get('atr_pct', 0.01) / 100
+    lev = suggest_leverage(atr_pct_decimal, confidence, max_leverage=10, min_leverage=1)
 
     # === MOSTRAR PANEL ===
 
-    # Estado general
-    col1, col2, col3 = st.columns(3)
-    col1.metric("📡 Estado", "PUBLICADA ✅" if is_valid else "ESPERAR ⏳")
-    col2.metric("📊 Progreso", "100%" if is_valid else f"{estimation.get('remaining_minutes', 0):.0f}%")
-    col3.metric("⏰ Próxima revisión", estimation.get('remaining_minutes', 0) < 1 and "Ahora" or f"{estimation.get('remaining_minutes', 0):.0f} min")
+    # Estado general con semáforo
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        if is_valid:
+            st.metric("📡 Estado", "PUBLICADA ✅")
+        else:
+            st.metric("📡 Estado", f"ESPERAR ⏳ ({result_opt['status']})")
+    with col2:
+        st.metric("📊 Progreso", "100%" if is_valid else f"{min(100, int(1/result_opt['expected_time_minutes']*100))}%")
+    with col3:
+        countdown = engine.get_countdown(result_opt['expected_time_minutes'])
+        st.metric("⏰ Próxima señal", countdown)
+
+    # Semáforo grande
+    status_colors = {
+        'VERDE': '🟢',
+        'AMARILLO': '🟡',
+        'NARANJA': '🟠',
+        'ROJO': '🔴',
+        'AZUL': '🔵'
+    }
+    st.markdown(f"## {status_colors.get(result_opt['status'], '⚪')} Estado: {result_opt['status']}")
+    st.caption(result_opt.get('recommendation', ''))
 
     # Señal actual
     st.markdown("---")
@@ -112,17 +143,17 @@ def render_firm_signals_panel():
         reason = format_signal_reason(best)
         st.info(reason)
 
-    # Estimación de tiempo
+    # Estimación de tiempo detallada
     st.markdown("---")
     st.subheader("⏳ Estimación de próximas oportunidades")
     cols = st.columns(4)
-    probs = [
-        ('15 min', estimation.get('probability_15min', 0)),
-        ('30 min', estimation.get('probability_30min', 0)),
-        ('1 h', estimation.get('probability_1h', 0)),
-        ('3 h', estimation.get('probability_3h', 0)),
+    probs_opt = [
+        ('15 min', result_opt.get('probability_15min', 0)),
+        ('30 min', result_opt.get('probability_30min', 0)),
+        ('1 h', result_opt.get('probability_60min', 0)),
+        ('3 h', result_opt.get('probability_180min', 0)),
     ]
-    for i, (label, prob) in enumerate(probs):
+    for i, (label, prob) in enumerate(probs_opt):
         with cols[i]:
             st.metric(label, f"{prob*100:.0f}%")
 
@@ -134,8 +165,8 @@ def render_firm_signals_panel():
             "KER": best.get('ker', 0),
             "ATR%": best.get('atr_pct', 0),
             "Amplitud": best.get('amplitude_pct', 0),
-            "Volumen relativo": "N/A",
-            "Trailing stop": f"{best.get('trailing_distance', 0)*100:.2f}%",
-            "Break-even trigger": f"{best.get('break_even_trigger', 0)*100:.2f}%",
-            "Tiempo máximo": f"{best.get('max_hold_minutes', 0)} min",
+            "Tasa de llegada (señales/min)": f"{result_opt['rate_per_minute']:.4f}",
+            "Confianza de estimación": f"{result_opt['confidence']*100:.0f}%",
+            "Estado semáforo": result_opt['status'],
+            "Próxima señal estimada": result_opt['expected_time_minutes'],
         })
