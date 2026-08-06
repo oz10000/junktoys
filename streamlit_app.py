@@ -11,7 +11,7 @@ from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
     TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS,
-    EXCHANGES  # <--- AHORA IMPORTADO CORRECTAMENTE
+    EXCHANGES
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# ESTILOS (colorido y juguetón)
+# ESTILOS
 # ============================================================
 st.markdown("""
     <style>
@@ -118,7 +118,7 @@ if 'data_engine' not in st.session_state:
         st.session_state.signal_history = []
 
 # ============================================================
-# FUNCIONES
+# FUNCIONES AUXILIARES
 # ============================================================
 def pad_list(items, target=10):
     result = items[:target]
@@ -127,19 +127,22 @@ def pad_list(items, target=10):
     return result
 
 def estimate_time_for_symbol(symbol, score, is_valid, signal_history):
+    """Retorna tiempo estimado en minutos (float) o None."""
     if is_valid:
-        return 0
+        return 0.0
     hist = [s for s in signal_history if s.get('symbol') == symbol and s.get('is_valid', False)]
     if len(hist) > 1:
         intervals = [(hist[i+1]['timestamp'] - hist[i]['timestamp']).total_seconds() / 60 for i in range(len(hist)-1)]
         if intervals:
             avg_interval = np.mean(intervals)
             reduction = abs(score) * 0.5
-            return max(0, avg_interval * (1 - reduction))
+            remaining = avg_interval * (1 - reduction)
+            return max(0.0, remaining)
     if abs(score) > 0.3:
-        base = 60
+        base = 60.0
         reduction = abs(score) * 0.6
-        return max(5, base * (1 - reduction))
+        remaining = base * (1 - reduction)
+        return max(5.0, remaining)
     return None
 
 def scan_and_rank():
@@ -201,7 +204,7 @@ def scan_and_rank():
             'break_even_trigger': s.break_even_trigger if s.is_valid else 0,
             'break_even_buffer': s.break_even_buffer if s.is_valid else 0,
             'max_hold_minutes': s.max_hold_minutes if s.is_valid else 0,
-            'estimated_time': estimated_time,
+            'estimated_time': estimated_time,  # será float o None
         }
         all_rankings.append(rank_entry)
         if s.is_valid:
@@ -231,6 +234,7 @@ def estimate_next_signal_global(signal_history):
     }
 
 def display_signal_details(r, with_trailing=True):
+    """Muestra detalles de una señal (segura, sin comparaciones inválidas)."""
     if not r['is_valid']:
         st.json({
             "Activo": r['symbol'],
@@ -262,13 +266,18 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"TP: ${r['tp_price']:.4f} ({r['tp_price']/r['entry_price']-1:.2%})")
         st.write(f"Break Even Trigger: {r['break_even_trigger']:.2%}")
         st.write(f"Tiempo máx: {r['max_hold_minutes']} min")
-        if r['estimated_time'] is not None:
-            if r['estimated_time'] < 1:
+
+        # Manejo seguro del tiempo estimado
+        est_time = r.get('estimated_time')
+        if est_time is not None and isinstance(est_time, (int, float)):
+            if est_time < 1:
                 st.write("⏳ Tiempo estimado para activación: < 1 min")
-            elif r['estimated_time'] < 60:
-                st.write(f"⏳ Tiempo estimado para activación: {int(r['estimated_time'])} min")
+            elif est_time < 60:
+                st.write(f"⏳ Tiempo estimado para activación: {int(est_time)} min")
             else:
-                st.write(f"⏳ Tiempo estimado para activación: {r['estimated_time']/60:.1f} h")
+                st.write(f"⏳ Tiempo estimado para activación: {est_time/60:.1f} h")
+        else:
+            st.write("⏳ Tiempo estimado para activación: N/A")
 
     if with_trailing:
         st.markdown("---")
@@ -287,7 +296,7 @@ def display_signal_details(r, with_trailing=True):
             st.write(f"SL trailing: ${r['entry_price'] * (1 - r['trailing_distance']):.4f}")
 
 # ============================================================
-# PESTAÑAS (8 tabs)
+# PESTAÑAS
 # ============================================================
 tab_names = [
     "📊 Trade Óptimo",
@@ -497,13 +506,14 @@ with tabs[1]:
                     if r is None:
                         data_long.append({'Pos': i+1, 'Activo': 'N/A', 'Score': 'N/A', 'ADX': 'N/A', 'KER': 'N/A', 'Amplitud%': 'N/A', 'Amplitud$': 'N/A', 'Tiempo estimado': 'N/A', 'Aprobado': 'N/A', 'Motivo': 'No hay suficientes longs'})
                     else:
-                        if r['estimated_time'] is not None:
-                            if r['estimated_time'] < 1:
+                        est_time = r.get('estimated_time')
+                        if est_time is not None and isinstance(est_time, (int, float)):
+                            if est_time < 1:
                                 time_str = "< 1 min"
-                            elif r['estimated_time'] < 60:
-                                time_str = f"{int(r['estimated_time'])} min"
+                            elif est_time < 60:
+                                time_str = f"{int(est_time)} min"
                             else:
-                                time_str = f"{r['estimated_time']/60:.1f} h"
+                                time_str = f"{est_time/60:.1f} h"
                         else:
                             time_str = "N/A"
                         data_long.append({
@@ -528,13 +538,14 @@ with tabs[1]:
                     if r is None:
                         data_short.append({'Pos': i+1, 'Activo': 'N/A', 'Score': 'N/A', 'ADX': 'N/A', 'KER': 'N/A', 'Amplitud%': 'N/A', 'Amplitud$': 'N/A', 'Tiempo estimado': 'N/A', 'Aprobado': 'N/A', 'Motivo': 'No hay suficientes shorts'})
                     else:
-                        if r['estimated_time'] is not None:
-                            if r['estimated_time'] < 1:
+                        est_time = r.get('estimated_time')
+                        if est_time is not None and isinstance(est_time, (int, float)):
+                            if est_time < 1:
                                 time_str = "< 1 min"
-                            elif r['estimated_time'] < 60:
-                                time_str = f"{int(r['estimated_time'])} min"
+                            elif est_time < 60:
+                                time_str = f"{int(est_time)} min"
                             else:
-                                time_str = f"{r['estimated_time']/60:.1f} h"
+                                time_str = f"{est_time/60:.1f} h"
                         else:
                             time_str = "N/A"
                         data_short.append({
