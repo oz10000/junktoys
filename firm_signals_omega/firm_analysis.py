@@ -10,18 +10,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from data_providers import FirmDataProvider
+import json
+import logging
+
+# Importar desde el mismo directorio
+from firm_signals_omega.data_providers import FirmDataProvider
+from firm_signals_omega.settings import FIRM_SIGNALS_CONFIG
 from core_engine import compute_adx, compute_ker, compute_atr, compute_pidelta_score, compute_regime
-from config import FIRM_SIGNALS_CONFIG
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def generate_firm_signals(symbols=['BTC/USDT', 'ETH/USDT', 'SOL/USDT']):
     provider = FirmDataProvider()
     results = []
 
     for sym in symbols:
+        logger.info(f"📊 Procesando {sym}...")
         df = provider.get_ohlcv(sym, timeframe='5m', limit=300)
         if df is None or df.empty:
-            print(f"❌ {sym}: sin datos")
+            logger.warning(f"❌ {sym}: sin datos")
+            results.append({'symbol': sym, 'passed': False, 'reason': 'Sin datos'})
             continue
 
         # Indicadores
@@ -48,11 +57,11 @@ def generate_firm_signals(symbols=['BTC/USDT', 'ETH/USDT', 'SOL/USDT']):
                 'ker': ker,
                 'regime': regime,
                 'passed': False,
-                'reason': 'Nivel 1 falló'
+                'reason': 'Nivel 1 falló (Calidad)'
             })
             continue
 
-        # NIVEL 2: Confirmación multi-timeframe (simulado con datos de 15m y 1h)
+        # NIVEL 2: Confirmación multi-timeframe
         df15 = provider.get_ohlcv(sym, timeframe='15m', limit=100)
         df1h = provider.get_ohlcv(sym, timeframe='1h', limit=50)
         aligned = 0
@@ -79,10 +88,10 @@ def generate_firm_signals(symbols=['BTC/USDT', 'ETH/USDT', 'SOL/USDT']):
             })
             continue
 
-        # NIVEL 3: Microestructura (simulado con volumen y volatilidad)
-        imbalance = (df['close'].iloc[-1] - df['open'].iloc[-1]) / df['open'].iloc[-1]  # proxy
-        funding = 0.0  # no disponible sin API key
-        oi_growing = volume_ratio > 1.2  # proxy
+        # NIVEL 3: Microestructura (simulado)
+        imbalance = (df['close'].iloc[-1] - df['open'].iloc[-1]) / df['open'].iloc[-1]
+        funding = 0.0
+        oi_growing = volume_ratio > 1.2
         micro_passed = abs(imbalance) > 0.001 and funding < 0.01 and oi_growing
         if not micro_passed:
             results.append({
@@ -92,7 +101,7 @@ def generate_firm_signals(symbols=['BTC/USDT', 'ETH/USDT', 'SOL/USDT']):
                 'ker': ker,
                 'regime': regime,
                 'passed': False,
-                'reason': 'Nivel 3 falló (microestructura)'
+                'reason': 'Nivel 3 falló (Microestructura)'
             })
             continue
 
@@ -110,12 +119,11 @@ def generate_firm_signals(symbols=['BTC/USDT', 'ETH/USDT', 'SOL/USDT']):
                 'ker': ker,
                 'regime': regime,
                 'passed': False,
-                'reason': 'Nivel 4 falló (horario)'
+                'reason': 'Nivel 4 falló (Horario)'
             })
             continue
 
-        # NIVEL 5: Correlación (simulado, siempre pasa)
-        # En producción se compararía con S&P 500, etc.
+        # NIVEL 5: Correlación (siempre pasa en esta simulación)
 
         # Señal aprobada
         direction = 'LONG' if score > 0 else 'SHORT'
@@ -162,9 +170,13 @@ def main():
         print(f"❌ {r['symbol']} - {r.get('reason', 'Desconocido')}")
 
     # Guardar reporte
-    import json
     with open('firm_signals_report.json', 'w') as f:
         json.dump(results, f, indent=2, default=str)
+
+    # Salida con código de error si no hay aprobadas
+    if len(approved) == 0:
+        print("\n⚠️ No hay señales Firm Ω aprobadas en este momento.")
+        sys.exit(0)  # No falla, solo informa
 
 if __name__ == '__main__':
     main()
