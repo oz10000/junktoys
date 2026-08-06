@@ -11,7 +11,7 @@ from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
     TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS,
-    EXCHANGES
+    EXCHANGES, FIRM_SIGNALS_CONFIG
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
@@ -127,7 +127,6 @@ def pad_list(items, target=10):
     return result
 
 def estimate_time_for_symbol(symbol, score, is_valid, signal_history):
-    """Retorna tiempo estimado en minutos (float) o None."""
     if is_valid:
         return 0.0
     hist = [s for s in signal_history if s.get('symbol') == symbol and s.get('is_valid', False)]
@@ -136,13 +135,11 @@ def estimate_time_for_symbol(symbol, score, is_valid, signal_history):
         if intervals:
             avg_interval = np.mean(intervals)
             reduction = abs(score) * 0.5
-            remaining = avg_interval * (1 - reduction)
-            return max(0.0, remaining)
+            return max(0.0, avg_interval * (1 - reduction))
     if abs(score) > 0.3:
         base = 60.0
         reduction = abs(score) * 0.6
-        remaining = base * (1 - reduction)
-        return max(5.0, remaining)
+        return max(5.0, base * (1 - reduction))
     return None
 
 def scan_and_rank():
@@ -204,7 +201,7 @@ def scan_and_rank():
             'break_even_trigger': s.break_even_trigger if s.is_valid else 0,
             'break_even_buffer': s.break_even_buffer if s.is_valid else 0,
             'max_hold_minutes': s.max_hold_minutes if s.is_valid else 0,
-            'estimated_time': estimated_time,  # será float o None
+            'estimated_time': estimated_time,
         }
         all_rankings.append(rank_entry)
         if s.is_valid:
@@ -234,7 +231,6 @@ def estimate_next_signal_global(signal_history):
     }
 
 def display_signal_details(r, with_trailing=True):
-    """Muestra detalles de una señal (segura, sin comparaciones inválidas)."""
     if not r['is_valid']:
         st.json({
             "Activo": r['symbol'],
@@ -267,7 +263,6 @@ def display_signal_details(r, with_trailing=True):
         st.write(f"Break Even Trigger: {r['break_even_trigger']:.2%}")
         st.write(f"Tiempo máx: {r['max_hold_minutes']} min")
 
-        # Manejo seguro del tiempo estimado
         est_time = r.get('estimated_time')
         if est_time is not None and isinstance(est_time, (int, float)):
             if est_time < 1:
@@ -311,7 +306,7 @@ tab_names = [
 tabs = st.tabs(tab_names)
 
 # ============================================================
-# TAB 1: Trade Óptimo
+# TAB 1 — TRADE ÓPTIMO
 # ============================================================
 with tabs[0]:
     st.header("🎯 Trade Óptimo — Listo para Ejecutar")
@@ -459,7 +454,7 @@ with tabs[0]:
             st.info("⏳ No hay suficientes datos para estimar la próxima oportunidad")
 
 # ============================================================
-# TAB 2: Ranking Completo
+# TAB 2 — RANKING COMPLETO
 # ============================================================
 with tabs[1]:
     st.header("🏆 Ranking Completo — Top 10 Long / Short")
@@ -611,13 +606,14 @@ with tabs[1]:
         st.info("Presiona 'Actualizar Ranking' para comenzar")
 
 # ============================================================
-# TAB 3: Backtesting
+# TAB 3 — BACKTESTING
 # ============================================================
 with tabs[2]:
     st.header("📈 Backtesting Completo")
     if run_backtest_btn:
         with st.spinner("🔄 Ejecutando backtesting..."):
             try:
+                from backtester import Backtester
                 de = st.session_state.data_engine
                 symbols = st.session_state.symbols[:20]
                 data_dict = {}
@@ -660,7 +656,7 @@ with tabs[2]:
         st.info("Presiona el botón en la barra lateral para ejecutar el backtesting")
 
 # ============================================================
-# TAB 4: BTC/ETH/SOL
+# TAB 4 — BTC/ETH/SOL
 # ============================================================
 with tabs[3]:
     st.header("📊 Análisis Independiente: Bitcoin · Ethereum · Solana")
@@ -707,7 +703,7 @@ with tabs[3]:
             st.error(f"Error: {e}")
 
 # ============================================================
-# TAB 5: Optimización
+# TAB 5 — OPTIMIZACIÓN
 # ============================================================
 with tabs[4]:
     st.header("🧠 Laboratorio de Optimización (100 iteraciones)")
@@ -747,7 +743,7 @@ with tabs[4]:
         st.info("Presiona el botón para ejecutar la optimización completa")
 
 # ============================================================
-# TAB 6: Diagnóstico
+# TAB 6 — DIAGNÓSTICO
 # ============================================================
 with tabs[5]:
     st.header("📈 Diagnóstico del Mercado")
@@ -794,7 +790,7 @@ with tabs[5]:
         st.warning("No hay datos disponibles para el diagnóstico")
 
 # ============================================================
-# TAB 7: Exchanges & Wise
+# TAB 7 — EXCHANGES & WISE
 # ============================================================
 with tabs[6]:
     st.header("🏦 Exchanges y Wise Integration")
@@ -824,18 +820,21 @@ with tabs[6]:
                 st.warning("No se pudo obtener la tasa de cambio")
 
 # ============================================================
-# TAB 8: Firm Signals Ω
+# TAB 8 — FIRM SIGNALS Ω (NUEVO PANEL)
 # ============================================================
 with tabs[7]:
-    st.header("🧸 Firm Signals Ω — Motor de Certificación")
-    st.info("El módulo Firm Signals Ω está en desarrollo. Requiere configuración adicional de fuentes de datos.")
-    st.markdown("""
-    **Estado:** No disponible
-    **Próximos pasos:**
-    - Configurar fuentes de datos alternativas (CoinGecko, Crypto.com, etc.)
-    - Implementar la lógica de certificación multinivel
-    - Validar con datos históricos
-    """)
+    st.header("🧸 Firm Signals Ω — Panel de Ejecución")
+    try:
+        from firm_signals_omega.streamlit_panel import render_firm_signals_panel
+        render_firm_signals_panel()
+    except ImportError as e:
+        st.warning(f"⚠️ El módulo Firm Signals Ω no está instalado correctamente.")
+        st.info("""
+        **Instalación:**
+        Copia la carpeta `firm_signals_omega` en la raíz del proyecto.
+        """)
+    except Exception as e:
+        st.error(f"Error al cargar Firm Signals Ω: {e}")
 
 # ============================================================
 # FOOTER
