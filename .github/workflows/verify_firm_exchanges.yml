@@ -1,0 +1,74 @@
+# .github/workflows/verify_firm_exchanges.yml
+name: 🔬 Verificar Exchanges para Firm Signals Ω
+
+on:
+  workflow_dispatch:        # Manual
+  schedule:
+    - cron: '0 */12 * * *'   # Cada 12 horas
+
+jobs:
+  verify-exchanges:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        provider: [okx, kraken, kucoin, coingecko, yahoo]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Instalar dependencias
+        run: |
+          pip install ccxt pandas numpy requests yfinance
+      
+      - name: Verificar proveedor ${{ matrix.provider }}
+        run: |
+          python -c "
+          import ccxt
+          import requests
+          import pandas as pd
+          import yfinance as yf
+          
+          provider = '${{ matrix.provider }}'
+          print(f'🔍 Verificando {provider}...')
+          
+          if provider == 'okx':
+              ex = ccxt.okx({'enableRateLimit': True})
+              df = ex.fetch_ohlcv('BTC-USDT-SWAP', timeframe='5m', limit=10)
+              print(f'✅ OKX: {len(df)} velas')
+          
+          elif provider == 'kraken':
+              ex = ccxt.kraken({'enableRateLimit': True})
+              df = ex.fetch_ohlcv('BTC/USDT', timeframe='5m', limit=10)
+              print(f'✅ Kraken: {len(df)} velas')
+          
+          elif provider == 'kucoin':
+              ex = ccxt.kucoin({'enableRateLimit': True})
+              df = ex.fetch_ohlcv('BTC/USDT', timeframe='5m', limit=10)
+              print(f'✅ KuCoin: {len(df)} velas')
+          
+          elif provider == 'coingecko':
+              url = 'https://api.coingecko.com/api/v3/coins/bitcoin/ohlc'
+              params = {'vs_currency': 'usd', 'days': 1, 'precision': 'full'}
+              r = requests.get(url, params=params)
+              if r.status_code == 200:
+                  data = r.json()
+                  print(f'✅ CoinGecko: {len(data)} velas')
+              else:
+                  print(f'❌ CoinGecko: {r.status_code}')
+          
+          elif provider == 'yahoo':
+              ticker = yf.Ticker('BTC-USD')
+              df = ticker.history(period='1d', interval='5m')
+              print(f'✅ Yahoo Finance: {len(df)} velas')
+          "
+      
+      - name: Guardar resultado
+        run: echo "Provider ${{ matrix.provider }} verificado" >> provider_status.txt
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: provider-${{ matrix.provider }}
+          path: provider_status.txt
