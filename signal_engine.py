@@ -1,4 +1,6 @@
 # signal_engine.py
+import pandas as pd
+import numpy as np
 from core_engine import compute_adx, compute_ker, compute_atr, compute_regime, compute_pidelta_score
 
 class Signal:
@@ -35,7 +37,14 @@ class Signal:
         ker_series = compute_ker(self.df, 10)
         self.ker = ker_series.iloc[-1] if not ker_series.empty else 0
         atr_series = compute_atr(self.df)
-        self.atr_pct = (atr_series.iloc[-1] / close) if not atr_series.empty else 0
+        atr_val = atr_series.iloc[-1] if not atr_series.empty else 0
+        # Asegurar que atr_pct sea un número
+        if isinstance(atr_val, (pd.Series, np.ndarray)):
+            atr_val = float(atr_val.iloc[-1]) if len(atr_val) > 0 else 0.0
+        try:
+            self.atr_pct = float(atr_val) / float(close) if float(close) != 0 else 0.0
+        except (TypeError, ValueError):
+            self.atr_pct = 0.0
         self.regime = compute_regime(self.df)
 
         self.is_valid = True
@@ -79,7 +88,7 @@ class Signal:
             self.break_even_trigger = p['break_even_trigger']
             self.break_even_buffer = p['break_even_buffer']
             self.max_hold_minutes = p['max_hold_minutes']
-            self.confidence = (abs(self.score) * 0.4 + (self.adx / 50) * 0.3 + self.ker * 0.2)
+            self.confidence = (abs(self.score)*0.4 + (self.adx/50)*0.3 + self.ker*0.2)
             if self.regime in ['Tendencia Fuerte', 'Expansión']:
                 self.confidence += 0.1
             self.confidence = min(1.0, self.confidence)
