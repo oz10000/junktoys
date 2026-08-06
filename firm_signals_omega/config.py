@@ -3,9 +3,6 @@
 Configuración de Firm Signals Ω
 """
 
-# ============================================================
-# CONFIGURACIÓN PRINCIPAL DE FIRM SIGNALS
-# ============================================================
 FIRM_SIGNALS_CONFIG = {
     'enabled': False,
     'quality_thresholds': {
@@ -34,9 +31,9 @@ FIRM_SIGNALS_CONFIG = {
 }
 
 # ============================================================
-# DIRECTORIOS DE CACHÉ (para compatibilidad con data_engine.py)
+# DIRECTORIOS DE CACHÉ (para compatibilidad)
 # ============================================================
-CACHE_DIR = 'data/firm_cache'      # <--- AÑADIDO
-OHLCV_DIR = 'data/ohlcv'           # <--- AÑADIDO
-MACRO_DATA_DIR = 'data/macro'      # <--- AÑADIDO
-TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']  # <--- AÑADIDO
+CACHE_DIR = 'data/firm_cache'
+OHLCV_DIR = 'data/ohlcv'
+MACRO_DATA_DIR = 'data/macro'
+TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
