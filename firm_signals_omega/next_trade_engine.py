@@ -2,7 +2,7 @@
 """
 Next Trade Engine Ω — Estimación dinámica del tiempo hasta la próxima oportunidad.
 
-Este módulo utiliza un modelo de proceso de Poisson no homogéneo para predecir
+Utiliza un modelo de proceso de Poisson no homogéneo para predecir
 cuándo es más probable que aparezca la siguiente señal de alta calidad.
 """
 
@@ -15,8 +15,8 @@ class NextTradeEngine:
     Motor de estimación de tiempo basado en el historial de señales y condiciones actuales.
     """
 
-    def __init__(self, config: Dict):
-        self.config = config
+    def __init__(self, config: Dict = None):
+        self.config = config or {}
         self.history = []          # Lista de intervalos entre señales (minutos)
         self.firm_history = []     # Lista de intervalos entre Firm Signals (minutos)
         self.base_rate = 1.0       # señales por minuto (estimación inicial)
@@ -82,7 +82,6 @@ class NextTradeEngine:
         """
         Factor basado en volatilidad (ATR%).
         """
-        # atr_pct en porcentaje (ej. 0.15 = 0.15%)
         base = 0.1
         if atr_pct <= 0:
             return 0.5
@@ -93,13 +92,12 @@ class NextTradeEngine:
         """
         Factor basado en la posición dentro de la vela de 5 minutos.
         """
-        # current_time_minutes: 0-5
         if current_time_minutes < 1:
-            return 1.2  # inicio de vela, mayor probabilidad
+            return 1.2
         elif current_time_minutes < 3:
             return 1.0
         else:
-            return 0.8  # final de vela, menor probabilidad
+            return 0.8
 
     def estimate(
         self,
@@ -117,44 +115,38 @@ class NextTradeEngine:
             - probability_15min: float
             - probability_30min: float
             - probability_60min: float
+            - probability_180min: float
             - confidence: float
             - status: str (VERDE, AMARILLO, NARANJA, ROJO, AZUL)
+            - rate_per_minute: float
+            - countdown: str
+            - recommendation: str
         """
-        # Tasa base
         lam = self.base_rate
 
-        # Ajustes por condiciones
         lam *= self.get_regime_factor(regime)
         lam *= self.get_adx_factor(adx)
         lam *= self.get_atr_factor(atr_pct)
         lam *= self.get_vela_factor(current_time_minutes)
 
-        # Si es para Firm Signals, la tasa es menor
         if is_firm:
-            lam *= 0.4  # las Firm son menos frecuentes
+            lam *= 0.4
 
-        # Si no hay historial o tasa demasiado baja, usar valores por defecto
         if lam < 1e-6:
-            lam = 1.0 / 180.0  # una señal cada 3 horas
+            lam = 1.0 / 180.0
 
-        # Tiempo esperado en minutos
         expected_time = 1.0 / lam
 
-        # Ajuste por tiempo desde la última señal (efecto de renovación)
         if last_signal_time:
             elapsed = (datetime.now() - last_signal_time).total_seconds() / 60
             if elapsed > 0:
-                # Si ha pasado más del tiempo esperado, la probabilidad aumenta
                 if elapsed > expected_time:
                     expected_time = max(10, expected_time * 0.5)
                 else:
-                    # Si ha pasado menos, ajustar hacia abajo
                     expected_time = max(5, expected_time * (1 - elapsed / (2 * expected_time)))
 
         expected_time = max(1.0, expected_time)
 
-        # Calcular probabilidades en diferentes horizontes (asumiendo distribución exponencial)
-        # P(T <= t) = 1 - exp(-λ * t)
         probs = {
             '15min': 1 - np.exp(-lam * 15),
             '30min': 1 - np.exp(-lam * 30),
@@ -162,20 +154,18 @@ class NextTradeEngine:
             '180min': 1 - np.exp(-lam * 180),
         }
 
-        # Confianza: basada en la cantidad de datos históricos
         confidence = min(1.0, len(self.history) / 20.0)
 
-        # Determinar estado (semáforo)
         if expected_time < 5:
-            status = "VERDE"      # Hay oportunidad ahora o muy pronto
+            status = "VERDE"
         elif expected_time < 15:
-            status = "AMARILLO"   # Probabilidad alta
+            status = "AMARILLO"
         elif expected_time < 45:
-            status = "NARANJA"    # Prepararse
+            status = "NARANJA"
         elif expected_time < 120:
-            status = "ROJO"       # No revisar durante un tiempo
+            status = "ROJO"
         else:
-            status = "AZUL"       # Mercado muerto
+            status = "AZUL"
 
         return {
             'expected_time_minutes': expected_time,
@@ -186,12 +176,11 @@ class NextTradeEngine:
             'confidence': confidence,
             'status': status,
             'rate_per_minute': lam,
+            'countdown': self.get_countdown(expected_time),
+            'recommendation': self.get_next_recommendation(status, expected_time)
         }
 
     def get_next_recommendation(self, status: str, expected_time: float) -> str:
-        """
-        Devuelve una recomendación textual para el operador.
-        """
         if status == "VERDE":
             return "✅ Revisa ahora. Hay oportunidades inminentes."
         elif status == "AMARILLO":
@@ -200,13 +189,10 @@ class NextTradeEngine:
             return f"🟡 Probabilidad creciente. Revisa en {int(max(5, expected_time*0.5))} minutos."
         elif status == "ROJO":
             return f"🔴 Baja probabilidad. No revises durante {int(expected_time)} minutos."
-        else:  # AZUL
+        else:
             return "🔵 Mercado inactivo. Revisa en 2-3 horas."
 
     def get_countdown(self, expected_time: float) -> str:
-        """
-        Devuelve una cuenta regresiva en formato legible.
-        """
         if expected_time < 1:
             return "< 1 min"
         elif expected_time < 60:
