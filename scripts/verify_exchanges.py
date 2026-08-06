@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# scripts/verify_exchanges.py
+"""
+Verificación unificada de exchanges para Firm Signals Ω
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import json
+from datetime import datetime
+import ccxt
+import requests
+import yfinance as yf
+import pandas as pd
+
+def main():
+    results = {
+        'timestamp': datetime.now().isoformat(),
+        'providers': {}
+    }
+
+    # ===== OKX =====
+    try:
+        ex = ccxt.okx({'enableRateLimit': True})
+        df = ex.fetch_ohlcv('BTC-USDT-SWAP', timeframe='5m', limit=10)
+        results['providers']['okx'] = {
+            'status': '✅ OK',
+            'candles': len(df),
+            'last_price': df[-1][4] if df else None,
+            'error': None
+        }
+    except Exception as e:
+        results['providers']['okx'] = {'status': '❌ FAIL', 'error': str(e)[:100]}
+
+    # ===== Kraken =====
+    try:
+        ex = ccxt.kraken({'enableRateLimit': True})
+        df = ex.fetch_ohlcv('BTC/USDT', timeframe='5m', limit=10)
+        results['providers']['kraken'] = {
+            'status': '✅ OK',
+            'candles': len(df),
+            'last_price': df[-1][4] if df else None,
+            'error': None
+        }
+    except Exception as e:
+        results['providers']['kraken'] = {'status': '❌ FAIL', 'error': str(e)[:100]}
+
+    # ===== KuCoin =====
+    try:
+        ex = ccxt.kucoin({'enableRateLimit': True})
+        df = ex.fetch_ohlcv('BTC/USDT', timeframe='5m', limit=10)
+        results['providers']['kucoin'] = {
+            'status': '✅ OK',
+            'candles': len(df),
+            'last_price': df[-1][4] if df else None,
+            'error': None
+        }
+    except Exception as e:
+        results['providers']['kucoin'] = {'status': '❌ FAIL', 'error': str(e)[:100]}
+
+    # ===== CoinGecko =====
+    try:
+        url = 'https://api.coingecko.com/api/v3/coins/bitcoin/ohlc'
+        params = {'vs_currency': 'usd', 'days': 1, 'precision': 'full'}
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            results['providers']['coingecko'] = {
+                'status': '✅ OK',
+                'candles': len(data),
+                'last_price': data[-1][4] if data else None,
+                'error': None
+            }
+        else:
+            results['providers']['coingecko'] = {
+                'status': '⚠️ PARTIAL',
+                'error': f'HTTP {r.status_code}',
+                'candles': 0
+            }
+    except Exception as e:
+        results['providers']['coingecko'] = {'status': '❌ FAIL', 'error': str(e)[:100]}
+
+    # ===== Yahoo Finance (BTC-USD) =====
+    try:
+        ticker = yf.Ticker('BTC-USD')
+        df = ticker.history(period='5d', interval='5m')
+        results['providers']['yahoo'] = {
+            'status': '✅ OK',
+            'candles': len(df),
+            'last_price': df['Close'].iloc[-1] if not df.empty else None,
+            'error': None
+        }
+    except Exception as e:
+        results['providers']['yahoo'] = {'status': '❌ FAIL', 'error': str(e)[:100]}
+
+    # ===== Bybit =====
+    try:
+        ex = ccxt.bybit({'enableRateLimit': True})
+        df = ex.fetch_ohlcv('BTC/USDT', timeframe='5m', limit=10)
+        results['providers']['bybit'] = {
+            'status': '✅ OK',
+            'candles': len(df),
+            'last_price': df[-1][4] if df else None,
+            'error': None
+        }
+    except Exception as e:
+        results['providers']['bybit'] = {'status': '⚠️ BLOCKED', 'error': str(e)[:100]}
+
+    # ===== Resumen =====
+    results['summary'] = {
+        'total': len(results['providers']),
+        'ok': sum(1 for p in results['providers'].values() if p['status'] == '✅ OK'),
+        'failed': sum(1 for p in results['providers'].values() if p['status'] == '❌ FAIL'),
+        'partial': sum(1 for p in results['providers'].values() if p['status'] in ('⚠️ PARTIAL', '⚠️ BLOCKED'))
+    }
+
+    # Guardar JSON
+    with open('exchange_verification_report.json', 'w') as f:
+        json.dump(results, f, indent=2)
+
+    # Imprimir resumen
+    print('=' * 60)
+    print('🔬 VERIFICACIÓN UNIFICADA DE EXCHANGES')
+    print('=' * 60)
+    for provider, data in results['providers'].items():
+        status = data['status']
+        candles = data.get('candles', 0)
+        price = data.get('last_price', 'N/A')
+        error = data.get('error', '')
+        print(f'{status}  {provider.upper():12}  Velas: {candles:4}  Precio: {price}  {error}')
+    print('=' * 60)
+    print(f"Total: {results['summary']['total']} | OK: {results['summary']['ok']} | Fallos: {results['summary']['failed']} | Parciales: {results['summary']['partial']}")
+    print('=' * 60)
+
+if __name__ == '__main__':
+    main()
