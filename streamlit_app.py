@@ -11,7 +11,7 @@ from data_engine import DataEngine
 from config import (
     INITIAL_CAPITAL, DEFAULT_PARAMS, VERSION, PROJECT_NAME,
     TIMEFRAME, KILL_SWITCH, ENTRY_ZONES, FALLBACK_SYMBOLS,
-    EXCHANGES, FIRM_SIGNALS_CONFIG
+    EXCHANGES  # <--- FIRM_SIGNALS_CONFIG ELIMINADO DE AQUÍ
 )
 from signal_engine import Signal
 from core_engine import compute_atr, compute_adx, compute_ker
