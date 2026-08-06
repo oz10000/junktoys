@@ -116,7 +116,7 @@ if 'data_engine' not in st.session_state:
         st.session_state.data_dict = {}
         st.session_state.last_refresh = None
         st.session_state.signal_history = []
-        st.session_state.firm_signal_history = []  # <-- AÑADIDO
+        st.session_state.firm_signal_history = []  # Añadido
 
 # ============================================================
 # FUNCIONES AUXILIARES
@@ -420,6 +420,7 @@ with tabs[0]:
                         # CORRECCIÓN: iterar correctamente sobre el diccionario
                         if isinstance(zones, dict):
                             for zone_name, zone_data in zones.items():
+                                # Verificar que zone_data es un diccionario
                                 if isinstance(zone_data, dict):
                                     color = ENTRY_ZONES.get(zone_name, {}).get('color', '#888')
                                     st.markdown(f"""
@@ -435,7 +436,8 @@ with tabs[0]:
             else:
                 st.warning("No se pudieron obtener datos")
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error en Trade Óptimo: {e}")
+            st.exception(e)  # Mostrar detalles para depuración
     st.markdown("---")
     st.subheader("⏳ Estado del Mercado")
     if st.session_state.data_dict:
