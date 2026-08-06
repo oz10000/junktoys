@@ -13,7 +13,7 @@ PROJECT_NAME = "Junk Toys v6.2.1 — Estabilización"
 # DATOS Y TIMEFRAMES
 # ============================================================
 TIMEFRAME = '5m'
-TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
+TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d']
 PRIMARY_TF = '5m'
 LOOKBACK_DAYS = 365
 INITIAL_CAPITAL = 10000.0
@@ -23,8 +23,17 @@ SLIPPAGE = 0.0005
 TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
 
 # ============================================================
-# EXCHANGES
+# EXCHANGES — DEFINIDO PARA COMPATIBILIDAD CON STREAMLIT
 # ============================================================
+EXCHANGES = {
+    'okx': {'type': 'swap', 'enabled': True},
+    'kucoin': {'type': 'linear', 'enabled': True},
+    'mexc': {'type': 'swap', 'enabled': True},
+    'kraken': {'type': 'spot', 'enabled': True},
+    'binance': {'type': 'spot', 'enabled': True},
+    'bybit': {'type': 'linear', 'enabled': True},
+}
+
 EXCHANGE_PRIORITY = ['okx', 'kucoin', 'mexc', 'kraken', 'binance', 'bybit']
 EXCHANGE_CONFIGS = {
     'okx': {'type': 'swap', 'symbol_format': '{base}-{quote}-SWAP'},
@@ -34,6 +43,7 @@ EXCHANGE_CONFIGS = {
     'binance': {'type': 'spot', 'symbol_format': '{base}/{quote}'},
     'bybit': {'type': 'linear', 'symbol_format': '{base}/{quote}'},
 }
+
 FALLBACK_SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
     'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'MATIC/USDT',
@@ -92,9 +102,9 @@ CERTIFICATION_CRITERIA = {
 # ============================================================
 # UNIVERSE — SE LLENA AUTOMÁTICAMENTE POR DATA_ENGINE
 # ============================================================
-UNIVERSE = []                 # <--- AHORA EXISTE
-UNIVERSE_BY_EXCHANGE = {}     # <--- AHORA EXISTE
-MAX_LEVERAGE_BY_ASSET = {}
+UNIVERSE = []
+UNIVERSE_BY_EXCHANGE = {}
+MAX_LEVERAGE_BY_ASSET = {}  # <--- AHORA DEFINIDO
 
 # ============================================================
 # PESOS DEL SCORING
