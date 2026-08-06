@@ -1,8 +1,11 @@
 # firm_signals_omega/config.py
 """
-Configuración específica de Firm Signals Ω
+Configuración de Firm Signals Ω
 """
 
+# ============================================================
+# CONFIGURACIÓN PRINCIPAL DE FIRM SIGNALS
+# ============================================================
 FIRM_SIGNALS_CONFIG = {
     'enabled': False,
     'quality_thresholds': {
@@ -29,3 +32,11 @@ FIRM_SIGNALS_CONFIG = {
         'break_even_buffer': 0.0005,
     }
 }
+
+# ============================================================
+# DIRECTORIOS DE CACHÉ (para compatibilidad con data_engine.py)
+# ============================================================
+CACHE_DIR = 'data/firm_cache'      # <--- AÑADIDO
+OHLCV_DIR = 'data/ohlcv'           # <--- AÑADIDO
+MACRO_DATA_DIR = 'data/macro'      # <--- AÑADIDO
+TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']  # <--- AÑADIDO
