@@ -1,10 +1,10 @@
 # trade_summary.py
-# Versión corregida y ampliada para Junk Toys v6.2.1
-# Maneja sr_data como escalar o lista, evitando TypeError
+# Versión corregida – maneja Signal como objeto o dict
+# Junk Toys v6.2.1
 
 import numpy as np
 import pandas as pd
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Any
 
 class TradeSummary:
     """
@@ -14,37 +14,25 @@ class TradeSummary:
 
     def __init__(
         self,
-        signal: dict,
+        signal: Any,  # puede ser dict o objeto con atributos
         metrics: dict,
         market_data: pd.DataFrame,
         sr_data: Union[float, List[float], Tuple[float, ...], None],
         amplitudes: dict,
         params: dict
     ):
-        """
-        Args:
-            signal: Diccionario con señal (ej. {'action':'buy', 'price':...})
-            metrics: Diccionario con métricas de rendimiento (drawdown, winrate, etc.)
-            market_data: DataFrame con precios/velas (necesario para calcular tendencia, etc.)
-            sr_data: Puede ser:
-                - float: valor único de Sharpe ratio
-                - list/tuple: (sharpe, sortino, calmar, ...) al menos 3 elementos
-                - None: sin datos
-            amplitudes: Diccionario con amplitudes (ej. para ATR)
-            params: Parámetros de configuración (ej. timeframe, stop loss, etc.)
-        """
         self.signal = signal
         self.metrics = metrics
         self.market_data = market_data
-        self.sr_data = self._normalize_sr_data(sr_data)  # <-- normalización
+        self.sr_data = self._normalize_sr_data(sr_data)
         self.amplitudes = amplitudes
         self.params = params
 
         # Atributos que se llenarán en _compute_summary
-        self.action = None
-        self.entry_price = None
-        self.stop_loss = None
-        self.take_profit = None
+        self.action = 'HOLD'
+        self.entry_price = 0.0
+        self.stop_loss = 0.0
+        self.take_profit = 0.0
         self.probability = 0.0
         self.risk_reward = 0.0
         self.regime = "Lateral"
@@ -54,19 +42,27 @@ class TradeSummary:
 
         self._compute_summary()
 
+    # ---------- Helpers para extraer valores de signal ----------
+    def _get_signal_attr(self, key: str, default=None):
+        """
+        Extrae un valor de self.signal, ya sea dict o objeto.
+        """
+        if isinstance(self.signal, dict):
+            return self.signal.get(key, default)
+        else:
+            # Asumimos que es un objeto con atributos
+            return getattr(self.signal, key, default)
+
+    # ---------- Normalización de sr_data ----------
     def _normalize_sr_data(self, sr_data):
         """
         Convierte sr_data a una tupla de al menos 3 elementos.
-        Si es float, se convierte a (float, 0.0, 0.0).
-        Si es None, se usa (0.0, 0.0, 0.0).
-        Si es lista/tupla con menos de 3, se rellena con ceros.
         """
         if sr_data is None:
             return (0.0, 0.0, 0.0)
         if isinstance(sr_data, (int, float)):
             return (float(sr_data), 0.0, 0.0)
         if isinstance(sr_data, (list, tuple)):
-            # Asegurar al menos 3 elementos
             if len(sr_data) == 0:
                 return (0.0, 0.0, 0.0)
             elif len(sr_data) == 1:
@@ -75,21 +71,21 @@ class TradeSummary:
                 return (float(sr_data[0]), float(sr_data[1]), 0.0)
             else:
                 return tuple(float(x) for x in sr_data[:3])
-        # Cualquier otro tipo, tratar como 0
         return (0.0, 0.0, 0.0)
 
+    # ---------- Cálculo principal ----------
     def _compute_summary(self):
         """Calcula todos los campos del resumen."""
-        # Acción y precios
-        self.action = self.signal.get('action', 'HOLD')
-        self.entry_price = self.signal.get('price', 0.0)
+        # Acción y precio (usando el helper)
+        self.action = self._get_signal_attr('action', 'HOLD')
+        self.entry_price = self._get_signal_attr('price', 0.0)
 
-        # Stop Loss y Take Profit desde amplitud (ATR, etc.)
+        # Stop Loss y Take Profit desde amplitud (ATR)
         atr = self.amplitudes.get('atr', 0.0)
-        if self.action == 'BUY':
+        if self.action.upper() == 'BUY':
             self.stop_loss = self.entry_price - 2 * atr
             self.take_profit = self.entry_price + 3 * atr
-        elif self.action == 'SELL':
+        elif self.action.upper() == 'SELL':
             self.stop_loss = self.entry_price + 2 * atr
             self.take_profit = self.entry_price - 3 * atr
         else:
@@ -107,26 +103,22 @@ class TradeSummary:
         # Probabilidad estimada (usando sr_data normalizado)
         self.probability = self._estimate_probability()
 
-        # Régimen de mercado (usando market_data)
+        # Régimen de mercado
         self._compute_regime()
 
+    # ---------- Probabilidad ----------
     def _estimate_probability(self) -> float:
         """
         Estima la probabilidad de éxito de la operación.
         Usa el Sharpe (primer elemento de sr_data) como base.
         """
-        # Obtener el Sharpe (índice 0) de la tupla normalizada
         sharpe = self.sr_data[0] if len(self.sr_data) > 0 else 0.0
-        # También podemos usar el tercer elemento (índice 2) como ajuste, pero ahora es seguro
-        # Ajuste por Calmar (índice 2) si existe
         calmar = self.sr_data[2] if len(self.sr_data) > 2 else 0.0
 
-        # Base de probabilidad: 50% + (sharpe * 10%) + (calmar * 5%)
         prob = 0.50 + (sharpe * 0.10) + (calmar * 0.05)
-        # Acotar entre 0 y 1
-        prob = max(0.0, min(1.0, prob))
-        return prob
+        return max(0.0, min(1.0, prob))
 
+    # ---------- Régimen de mercado ----------
     def _compute_regime(self):
         """Determina régimen de mercado basado en datos OHLC."""
         if self.market_data is None or len(self.market_data) < 20:
@@ -136,13 +128,12 @@ class TradeSummary:
             self.risk_level = "Alto"
             return
 
-        # Calcular ADX y tendencia simple (ejemplo simplificado)
         try:
             close = self.market_data['Close']
             high = self.market_data['High']
             low = self.market_data['Low']
 
-            # Cálculo ADX (aproximado)
+            # Cálculo ADX simplificado
             atr = self._atr(high, low, close, 14)
             plus_dm = np.where(high.diff() > low.diff(), np.maximum(high.diff(), 0), 0)
             minus_dm = np.where(low.diff() > high.diff(), np.maximum(low.diff(), 0), 0)
@@ -152,7 +143,6 @@ class TradeSummary:
             adx = dx.rolling(14).mean().iloc[-1] if len(dx) > 0 else 0
             self.adx_avg = adx if not np.isnan(adx) else 0
 
-            # Fuerza de tendencia
             if self.adx_avg > 25:
                 self.trend_strength = "Fuerte" if self.adx_avg > 40 else "Moderada"
                 self.regime = "Tendencia"
@@ -160,7 +150,6 @@ class TradeSummary:
                 self.trend_strength = "Débil"
                 self.regime = "Lateral"
 
-            # Riesgo basado en volatilidad
             vol = close.pct_change().std() * np.sqrt(252)
             if vol < 0.2:
                 self.risk_level = "Bajo"
@@ -169,8 +158,7 @@ class TradeSummary:
             else:
                 self.risk_level = "Alto"
 
-        except Exception as e:
-            # Si falla, valores por defecto
+        except Exception:
             self.regime = "Indeterminado"
             self.trend_strength = 0
             self.adx_avg = 0
@@ -184,6 +172,7 @@ class TradeSummary:
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         return tr.rolling(period).mean()
 
+    # ---------- Métodos auxiliares ----------
     def to_dict(self) -> dict:
         """Devuelve un diccionario con todos los campos."""
         return {
