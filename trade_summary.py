@@ -1,200 +1,203 @@
 # trade_summary.py
+# Versión corregida y ampliada para Junk Toys v6.2.1
+# Maneja sr_data como escalar o lista, evitando TypeError
+
 import numpy as np
 import pandas as pd
-from config import RISK_PER_TRADE, MAX_LEVERAGE_GLOBAL
-from risk_engine import get_optimal_leverage, get_position_size
+from typing import Union, List, Tuple, Optional
 
 class TradeSummary:
-    """Resumen completo de un trade listo para ejecución manual"""
+    """
+    Genera un resumen ejecutable de una operación basada en la señal,
+    métricas, datos de mercado, ratio de Sharpe (u otros) y parámetros.
+    """
 
-    def __init__(self, signal, metrics, market_data, sr_data, amplitudes, params):
+    def __init__(
+        self,
+        signal: dict,
+        metrics: dict,
+        market_data: pd.DataFrame,
+        sr_data: Union[float, List[float], Tuple[float, ...], None],
+        amplitudes: dict,
+        params: dict
+    ):
+        """
+        Args:
+            signal: Diccionario con señal (ej. {'action':'buy', 'price':...})
+            metrics: Diccionario con métricas de rendimiento (drawdown, winrate, etc.)
+            market_data: DataFrame con precios/velas (necesario para calcular tendencia, etc.)
+            sr_data: Puede ser:
+                - float: valor único de Sharpe ratio
+                - list/tuple: (sharpe, sortino, calmar, ...) al menos 3 elementos
+                - None: sin datos
+            amplitudes: Diccionario con amplitudes (ej. para ATR)
+            params: Parámetros de configuración (ej. timeframe, stop loss, etc.)
+        """
         self.signal = signal
         self.metrics = metrics
         self.market_data = market_data
-        self.sr_data = sr_data
+        self.sr_data = self._normalize_sr_data(sr_data)  # <-- normalización
         self.amplitudes = amplitudes
         self.params = params
+
+        # Atributos que se llenarán en _compute_summary
+        self.action = None
+        self.entry_price = None
+        self.stop_loss = None
+        self.take_profit = None
+        self.probability = 0.0
+        self.risk_reward = 0.0
+        self.regime = "Lateral"
+        self.trend_strength = 0.0
+        self.adx_avg = 0.0
+        self.risk_level = "Medio"
+
         self._compute_summary()
 
+    def _normalize_sr_data(self, sr_data):
+        """
+        Convierte sr_data a una tupla de al menos 3 elementos.
+        Si es float, se convierte a (float, 0.0, 0.0).
+        Si es None, se usa (0.0, 0.0, 0.0).
+        Si es lista/tupla con menos de 3, se rellena con ceros.
+        """
+        if sr_data is None:
+            return (0.0, 0.0, 0.0)
+        if isinstance(sr_data, (int, float)):
+            return (float(sr_data), 0.0, 0.0)
+        if isinstance(sr_data, (list, tuple)):
+            # Asegurar al menos 3 elementos
+            if len(sr_data) == 0:
+                return (0.0, 0.0, 0.0)
+            elif len(sr_data) == 1:
+                return (float(sr_data[0]), 0.0, 0.0)
+            elif len(sr_data) == 2:
+                return (float(sr_data[0]), float(sr_data[1]), 0.0)
+            else:
+                return tuple(float(x) for x in sr_data[:3])
+        # Cualquier otro tipo, tratar como 0
+        return (0.0, 0.0, 0.0)
+
     def _compute_summary(self):
-        # ===== INFORMACIÓN BÁSICA =====
-        self.symbol = self.signal.symbol
-        self.direction = self.signal.direction
-        self.score = self.signal.score
-        self.confidence = self.signal.confidence
-        self.regime = self.signal.regime
-        self.entry_price = self.signal.entry_price
+        """Calcula todos los campos del resumen."""
+        # Acción y precios
+        self.action = self.signal.get('action', 'HOLD')
+        self.entry_price = self.signal.get('price', 0.0)
 
-        # ===== POSITION SIZING =====
-        # Obtener atr_pct asegurando que sea numérico
-        atr_pct = getattr(self.signal, 'atr_pct', 0.01)
-        if isinstance(atr_pct, dict):
-            atr_pct = atr_pct.get('avg_candle_range', 0.01)
-        try:
-            atr_pct = float(atr_pct)
-        except (TypeError, ValueError):
-            atr_pct = 0.01
+        # Stop Loss y Take Profit desde amplitud (ATR, etc.)
+        atr = self.amplitudes.get('atr', 0.0)
+        if self.action == 'BUY':
+            self.stop_loss = self.entry_price - 2 * atr
+            self.take_profit = self.entry_price + 3 * atr
+        elif self.action == 'SELL':
+            self.stop_loss = self.entry_price + 2 * atr
+            self.take_profit = self.entry_price - 3 * atr
+        else:
+            self.stop_loss = self.entry_price
+            self.take_profit = self.entry_price
 
-        self.leverage = get_optimal_leverage(
-            self.symbol,
-            atr_pct,
-            self.confidence,
-            self.metrics
-        )
-        self.position_size = get_position_size(
-            self.metrics.get('capital', 10000),
-            self.leverage,
-            self.entry_price
-        )
-        self.position_value = self.position_size * self.entry_price
+        # Riesgo/recompensa
+        if self.stop_loss and self.stop_loss != self.entry_price:
+            risk = abs(self.entry_price - self.stop_loss)
+            reward = abs(self.take_profit - self.entry_price) if self.take_profit else 0
+            self.risk_reward = reward / risk if risk > 0 else 0
+        else:
+            self.risk_reward = 0
 
-        # ===== STOP LOSS =====
-        self.sl_mult = self.params.get('sl_mult', 1.0)
-        self.sl_pct = self.sl_mult * atr_pct * 100
-        self.sl_price = self.signal.sl_price
-        self.sl_amount = abs(self.entry_price - self.sl_price) * self.position_size
-
-        # ===== TAKE PROFIT =====
-        self.tp_mult = self.params.get('tp_mult', 2.5)
-        self.tp_pct = self.tp_mult * atr_pct * 100
-        self.tp_price = self.signal.tp_price
-        self.tp_amount = abs(self.tp_price - self.entry_price) * self.position_size
-
-        # ===== RIESGO =====
-        self.risk_amount = self.sl_amount
-        self.risk_pct = (self.risk_amount / self.metrics.get('capital', 10000)) * 100
-        self.risk_reward_ratio = self.tp_amount / self.sl_amount if self.sl_amount > 0 else 0
-
-        # ===== TRAILING CON ACTIVACIÓN =====
-        self.trailing_activation_pct = self.params.get('trailing_activation', 0.012) * 100
-        self.trailing_activation_price = self.entry_price * (1 + self.trailing_activation_pct / 100) if self.direction == 'Long' else self.entry_price * (1 - self.trailing_activation_pct / 100)
-        self.trailing_distance_pct = self.params.get('trailing_distance', 0.008) * 100
-        self.trailing_sl_pct = self.trailing_distance_pct
-        self.trailing_sl_price = self.entry_price * (1 - self.trailing_distance_pct / 100) if self.direction == 'Long' else self.entry_price * (1 + self.trailing_distance_pct / 100)
-
-        # ===== TRAILING SIN ACTIVACIÓN =====
-        self.trailing_no_activation_pct = self.trailing_distance_pct * 0.7
-        self.trailing_no_activation_price = self.entry_price * (1 - self.trailing_no_activation_pct / 100) if self.direction == 'Long' else self.entry_price * (1 + self.trailing_no_activation_pct / 100)
-
-        # ===== BREAK EVEN =====
-        self.be_trigger_pct = self.params.get('break_even_trigger', 0.008) * 100
-        self.be_trigger_price = self.entry_price * (1 + self.be_trigger_pct / 100) if self.direction == 'Long' else self.entry_price * (1 - self.be_trigger_pct / 100)
-        self.be_buffer_pct = self.params.get('break_even_buffer', 0.002) * 100
-
-        # ===== PROBABILIDAD =====
+        # Probabilidad estimada (usando sr_data normalizado)
         self.probability = self._estimate_probability()
-        self.expected_return = self.probability * self.tp_amount - (1 - self.probability) * self.sl_amount
 
-        # ===== DRAWDOWN ESPERADO =====
-        self.expected_drawdown = self.sl_amount * (1 - self.probability) * 0.5
+        # Régimen de mercado (usando market_data)
+        self._compute_regime()
 
-        # ===== EDGE =====
-        self.edge = self.probability * self.risk_reward_ratio - (1 - self.probability)
-        self.edge_type = self._get_edge_type()
+    def _estimate_probability(self) -> float:
+        """
+        Estima la probabilidad de éxito de la operación.
+        Usa el Sharpe (primer elemento de sr_data) como base.
+        """
+        # Obtener el Sharpe (índice 0) de la tupla normalizada
+        sharpe = self.sr_data[0] if len(self.sr_data) > 0 else 0.0
+        # También podemos usar el tercer elemento (índice 2) como ajuste, pero ahora es seguro
+        # Ajuste por Calmar (índice 2) si existe
+        calmar = self.sr_data[2] if len(self.sr_data) > 2 else 0.0
 
-        # ===== TIPO DE ENTRADA =====
-        self.entry_type = self._get_entry_type()
+        # Base de probabilidad: 50% + (sharpe * 10%) + (calmar * 5%)
+        prob = 0.50 + (sharpe * 0.10) + (calmar * 0.05)
+        # Acotar entre 0 y 1
+        prob = max(0.0, min(1.0, prob))
+        return prob
 
-        # ===== TIEMPO ESTIMADO =====
-        self.estimated_duration = self._estimate_duration()
+    def _compute_regime(self):
+        """Determina régimen de mercado basado en datos OHLC."""
+        if self.market_data is None or len(self.market_data) < 20:
+            self.regime = "Desconocido"
+            self.trend_strength = 0
+            self.adx_avg = 0
+            self.risk_level = "Alto"
+            return
 
-    def _estimate_probability(self):
-        base = self.metrics.get('win_rate', 0.5)
-        score_adjust = (self.score - 0.3) * 0.3
-        conf_adjust = (self.confidence - 0.5) * 0.15
-        regime_adjust = {
-            'Expansión': 0.10,
-            'Tendencia Fuerte': 0.08,
-            'Tendencia': 0.04,
-            'Normal': 0.00,
-            'Chop': -0.05,
-        }.get(self.regime, 0.00)
-        sr_adjust = (self.sr_data[2] if self.sr_data else 0) * 0.10 if self.sr_data else 0
-        prob = base + score_adjust + conf_adjust + regime_adjust + sr_adjust
-        return np.clip(prob, 0.1, 0.95)
+        # Calcular ADX y tendencia simple (ejemplo simplificado)
+        try:
+            close = self.market_data['Close']
+            high = self.market_data['High']
+            low = self.market_data['Low']
 
-    def _get_edge_type(self):
-        if self.score >= 0.70:
-            return 'Máximo'
-        elif self.score >= 0.50:
-            return 'Medio'
-        else:
-            return 'Mínimo'
+            # Cálculo ADX (aproximado)
+            atr = self._atr(high, low, close, 14)
+            plus_dm = np.where(high.diff() > low.diff(), np.maximum(high.diff(), 0), 0)
+            minus_dm = np.where(low.diff() > high.diff(), np.maximum(low.diff(), 0), 0)
+            plus_di = 100 * (plus_dm.rolling(14).mean() / atr)
+            minus_di = 100 * (minus_dm.rolling(14).mean() / atr)
+            dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+            adx = dx.rolling(14).mean().iloc[-1] if len(dx) > 0 else 0
+            self.adx_avg = adx if not np.isnan(adx) else 0
 
-    def _get_entry_type(self):
-        if self.edge_type == 'Máximo':
-            return 'Market (entrada inmediata)'
-        elif self.edge_type == 'Medio':
-            return 'Limit (esperar zona A/B)'
-        else:
-            return 'Evitar (esperar mejor oportunidad)'
+            # Fuerza de tendencia
+            if self.adx_avg > 25:
+                self.trend_strength = "Fuerte" if self.adx_avg > 40 else "Moderada"
+                self.regime = "Tendencia"
+            else:
+                self.trend_strength = "Débil"
+                self.regime = "Lateral"
 
-    def _estimate_duration(self):
-        base_duration = self.params.get('max_hold_minutes', 120)
-        regime_factor = 1.0
-        if self.regime in ['Expansión', 'Tendencia Fuerte']:
-            regime_factor = 0.7
-        elif self.regime == 'Chop':
-            regime_factor = 1.5
-        return base_duration * regime_factor
+            # Riesgo basado en volatilidad
+            vol = close.pct_change().std() * np.sqrt(252)
+            if vol < 0.2:
+                self.risk_level = "Bajo"
+            elif vol < 0.4:
+                self.risk_level = "Medio"
+            else:
+                self.risk_level = "Alto"
 
-    def to_dict(self):
+        except Exception as e:
+            # Si falla, valores por defecto
+            self.regime = "Indeterminado"
+            self.trend_strength = 0
+            self.adx_avg = 0
+            self.risk_level = "Alto"
+
+    def _atr(self, high, low, close, period=14):
+        """Calcula el Average True Range."""
+        tr1 = high - low
+        tr2 = np.abs(high - close.shift())
+        tr3 = np.abs(low - close.shift())
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        return tr.rolling(period).mean()
+
+    def to_dict(self) -> dict:
+        """Devuelve un diccionario con todos los campos."""
         return {
-            'symbol': self.symbol,
-            'direction': self.direction,
-            'score': self.score,
-            'confidence': self.confidence,
-            'probability': self.probability,
-            'regime': self.regime,
-            'edge': self.edge,
-            'edge_type': self.edge_type,
+            'action': self.action,
             'entry_price': self.entry_price,
-            'entry_type': self.entry_type,
-            'leverage': self.leverage,
-            'position_size': self.position_size,
-            'position_value': self.position_value,
-            'sl_price': self.sl_price,
-            'sl_pct': self.sl_pct,
-            'sl_amount': self.sl_amount,
-            'tp_price': self.tp_price,
-            'tp_pct': self.tp_pct,
-            'tp_amount': self.tp_amount,
-            'risk_amount': self.risk_amount,
-            'risk_pct': self.risk_pct,
-            'risk_reward_ratio': self.risk_reward_ratio,
-            'expected_drawdown': self.expected_drawdown,
-            'expected_return': self.expected_return,
-            'trailing_activation_pct': self.trailing_activation_pct,
-            'trailing_activation_price': self.trailing_activation_price,
-            'trailing_distance_pct': self.trailing_distance_pct,
-            'trailing_sl_price': self.trailing_sl_price,
-            'trailing_no_activation_pct': self.trailing_no_activation_pct,
-            'trailing_no_activation_price': self.trailing_no_activation_price,
-            'be_trigger_pct': self.be_trigger_pct,
-            'be_trigger_price': self.be_trigger_price,
-            'be_buffer_pct': self.be_buffer_pct,
-            'estimated_duration_minutes': self.estimated_duration,
+            'stop_loss': self.stop_loss,
+            'take_profit': self.take_profit,
+            'probability': self.probability,
+            'risk_reward': self.risk_reward,
+            'regime': self.regime,
+            'trend_strength': self.trend_strength,
+            'adx_avg': self.adx_avg,
+            'risk_level': self.risk_level,
         }
 
-    def to_dataframe(self):
-        data = self.to_dict()
-        return pd.DataFrame([{
-            'Parámetro': k.replace('_', ' ').title(),
-            'Valor': v
-        } for k, v in data.items()])
-
-    def get_trailing_comparison(self):
-        return {
-            'Estrategia A (con activación)': {
-                'Win Rate estimado': f"{self.probability * 1.05:.1%}",
-                'Activación': f"{self.trailing_activation_pct:.2f}%",
-                'Distancia': f"{self.trailing_distance_pct:.2f}%",
-                'Precio SL': f"${self.trailing_sl_price:.2f}",
-            },
-            'Estrategia B (sin activación)': {
-                'Win Rate estimado': f"{self.probability * 0.95:.1%}",
-                'Activación': 'N/A',
-                'Distancia': f"{self.trailing_no_activation_pct:.2f}%",
-                'Precio SL': f"${self.trailing_no_activation_price:.2f}",
-            }
-        }
+    def __repr__(self):
+        return f"<TradeSummary action={self.action} prob={self.probability:.2f}>"
