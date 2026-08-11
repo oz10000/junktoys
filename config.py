@@ -1,27 +1,39 @@
-# ============================================================
-# CONFIGURACIÓN — JUNK TOYS v6.2.1 (COMPLETA)
-# ============================================================
-
+# config.py
 import os
 
-# --- Proyecto ---
+# ============================================================
+# PROYECTO
+# ============================================================
 PROJECT_NAME = "🧸 Junk Toys"
 VERSION = "6.2.1"
 
-# --- Constantes globales ---
+# ============================================================
+# ZONA HORARIA Y FILTROS (para utils.py)
+# ============================================================
+TIMEZONE = 'America/Argentina/Buenos_Aires'
+HOUR_FILTER_START = 9   # 9 AM Argentina
+HOUR_FILTER_END = 18    # 6 PM Argentina
+
+# ============================================================
+# CONSTANTES PRINCIPALES
+# ============================================================
 TIMEFRAME = '5m'
 INITIAL_CAPITAL = 10000.0
 MAX_HOLD = 120
 RISK_PER_TRADE = 0.02
-LEVERAGE = 5                      # <--- CRUCIAL
+LEVERAGE = 5
 
-# --- Directorios ---
+# ============================================================
+# DIRECTORIOS
+# ============================================================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(ROOT_DIR, 'cache')
 DATA_DIR = os.path.join(ROOT_DIR, 'data')
 LOGS_DIR = os.path.join(ROOT_DIR, 'logs')
 
-# --- Universo de activos ---
+# ============================================================
+# ACTIVOS
+# ============================================================
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'MATIC/USDT',
@@ -35,7 +47,9 @@ FALLBACK_SYMBOLS = SYMBOLS + [
     'DOGE/USDT', 'BCH/USDT'
 ]
 
-# --- Exchanges ---
+# ============================================================
+# EXCHANGES
+# ============================================================
 EXCHANGE_PRIORITY = ['binance', 'okx', 'kucoin', 'mexc', 'kraken', 'bybit']
 EXCHANGES = {
     'binance': {'type': 'spot', 'priority': 1},
@@ -46,7 +60,9 @@ EXCHANGES = {
     'bybit': {'type': 'spot', 'priority': 6},
 }
 
-# --- Parámetros de la estrategia ---
+# ============================================================
+# PARÁMETROS DE ESTRATEGIA
+# ============================================================
 MIN_SCORE = 0.35
 ADX_THRESHOLD = 22
 KER_THRESHOLD = 0.42
@@ -58,7 +74,9 @@ TRAILING_DISTANCE = 0.008
 BE_TRIGGER = 0.008
 BE_BUFFER = 0.002
 
-# --- Parámetros por defecto (para Signal) ---
+# ============================================================
+# PARÁMETROS POR DEFECTO (para Signal y otros módulos)
+# ============================================================
 DEFAULT_PARAMS = {
     'min_score': MIN_SCORE,
     'adx_threshold': ADX_THRESHOLD,
@@ -76,17 +94,23 @@ DEFAULT_PARAMS = {
     'timeframe': TIMEFRAME,
 }
 
-# --- Zonas de entrada (para TradeSummary) ---
+# ============================================================
+# ZONAS DE ENTRADA
+# ============================================================
 ENTRY_ZONES = {
     'A': {'color': '#4CAF50', 'desc': 'Zona de entrada fuerte'},
     'B': {'color': '#FF9800', 'desc': 'Zona de entrada media'},
     'C': {'color': '#F44336', 'desc': 'Zona de entrada débil'},
 }
 
-# --- Kill switch ---
+# ============================================================
+# KILL SWITCH
+# ============================================================
 KILL_SWITCH = False
 
-# --- Parámetros ajustados nuevos (DeepSync) ---
+# ============================================================
+# PARÁMETROS AJUSTADOS DEEPSYNC (opcionales)
+# ============================================================
 USE_ADAPTIVE_TP = False
 USE_ADAPTIVE_TRAILING = False
 USE_DYNAMIC_LEVERAGE = False
@@ -169,6 +193,9 @@ DEFAULT_DECIMALS = 4
 class CONFIG:
     PROJECT_NAME = PROJECT_NAME
     VERSION = VERSION
+    TIMEZONE = TIMEZONE
+    HOUR_FILTER_START = HOUR_FILTER_START
+    HOUR_FILTER_END = HOUR_FILTER_END
     TIMEFRAME = TIMEFRAME
     INITIAL_CAPITAL = INITIAL_CAPITAL
     MAX_HOLD = MAX_HOLD
