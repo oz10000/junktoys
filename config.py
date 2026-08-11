@@ -1,20 +1,27 @@
 # ============================================================
-# CONFIGURACIÓN — JUNK TOYS v6.2.1 (CORREGIDA)
+# CONFIGURACIÓN — JUNK TOYS v6.2.1 (COMPLETA)
 # ============================================================
 
-# --- Constantes globales (para import directo) ---
+import os
+
+# --- Proyecto ---
+PROJECT_NAME = "🧸 Junk Toys"
+VERSION = "6.2.1"
+
+# --- Constantes globales ---
 TIMEFRAME = '5m'
 INITIAL_CAPITAL = 10000.0
 MAX_HOLD = 120
 RISK_PER_TRADE = 0.02
-LEVERAGE = 5
+LEVERAGE = 5                      # <--- CRUCIAL
 
 # --- Directorios ---
-CACHE_DIR = 'cache'
-DATA_DIR = 'data'
-LOGS_DIR = 'logs'
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(ROOT_DIR, 'cache')
+DATA_DIR = os.path.join(ROOT_DIR, 'data')
+LOGS_DIR = os.path.join(ROOT_DIR, 'logs')
 
-# --- Universo de activos (completo) ---
+# --- Universo de activos ---
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'MATIC/USDT',
@@ -28,10 +35,18 @@ FALLBACK_SYMBOLS = SYMBOLS + [
     'DOGE/USDT', 'BCH/USDT'
 ]
 
-# --- Prioridad de exchanges (fallback) ---
+# --- Exchanges ---
 EXCHANGE_PRIORITY = ['binance', 'okx', 'kucoin', 'mexc', 'kraken', 'bybit']
+EXCHANGES = {
+    'binance': {'type': 'spot', 'priority': 1},
+    'okx': {'type': 'spot', 'priority': 2},
+    'kucoin': {'type': 'spot', 'priority': 3},
+    'mexc': {'type': 'spot', 'priority': 4},
+    'kraken': {'type': 'spot', 'priority': 5},
+    'bybit': {'type': 'spot', 'priority': 6},
+}
 
-# --- Parámetros de la estrategia (originales) ---
+# --- Parámetros de la estrategia ---
 MIN_SCORE = 0.35
 ADX_THRESHOLD = 22
 KER_THRESHOLD = 0.42
@@ -43,14 +58,39 @@ TRAILING_DISTANCE = 0.008
 BE_TRIGGER = 0.008
 BE_BUFFER = 0.002
 
-# ============================================================
-# PARÁMETROS AJUSTADOS NUEVOS (DeepSync) — desactivados por defecto
-# ============================================================
+# --- Parámetros por defecto (para Signal) ---
+DEFAULT_PARAMS = {
+    'min_score': MIN_SCORE,
+    'adx_threshold': ADX_THRESHOLD,
+    'ker_threshold': KER_THRESHOLD,
+    'sl_mult': SL_MULT,
+    'tp_mult': TP_MULT,
+    'tp_trend_bonus': TP_TREND_BONUS,
+    'trailing_activation': TRAILING_ACTIVATION,
+    'trailing_distance': TRAILING_DISTANCE,
+    'be_trigger': BE_TRIGGER,
+    'be_buffer': BE_BUFFER,
+    'max_hold': MAX_HOLD,
+    'risk_per_trade': RISK_PER_TRADE,
+    'leverage': LEVERAGE,
+    'timeframe': TIMEFRAME,
+}
+
+# --- Zonas de entrada (para TradeSummary) ---
+ENTRY_ZONES = {
+    'A': {'color': '#4CAF50', 'desc': 'Zona de entrada fuerte'},
+    'B': {'color': '#FF9800', 'desc': 'Zona de entrada media'},
+    'C': {'color': '#F44336', 'desc': 'Zona de entrada débil'},
+}
+
+# --- Kill switch ---
+KILL_SWITCH = False
+
+# --- Parámetros ajustados nuevos (DeepSync) ---
 USE_ADAPTIVE_TP = False
 USE_ADAPTIVE_TRAILING = False
 USE_DYNAMIC_LEVERAGE = False
 
-# --- Diccionarios para parámetros por activo (se usan solo si las banderas están activas) ---
 ASSET_TP_MULT = {
     'BTC/USDT': 2.8, 'ETH/USDT': 3.0, 'SOL/USDT': 3.2,
     'XRP/USDT': 2.6, 'ADA/USDT': 3.1, 'DOT/USDT': 3.1,
@@ -127,6 +167,8 @@ DEFAULT_DECIMALS = 4
 # CLASE CONFIG (para importaciones con from config import CONFIG)
 # ============================================================
 class CONFIG:
+    PROJECT_NAME = PROJECT_NAME
+    VERSION = VERSION
     TIMEFRAME = TIMEFRAME
     INITIAL_CAPITAL = INITIAL_CAPITAL
     MAX_HOLD = MAX_HOLD
@@ -138,6 +180,7 @@ class CONFIG:
     SYMBOLS = SYMBOLS
     FALLBACK_SYMBOLS = FALLBACK_SYMBOLS
     EXCHANGE_PRIORITY = EXCHANGE_PRIORITY
+    EXCHANGES = EXCHANGES
     MIN_SCORE = MIN_SCORE
     ADX_THRESHOLD = ADX_THRESHOLD
     KER_THRESHOLD = KER_THRESHOLD
@@ -148,6 +191,9 @@ class CONFIG:
     TRAILING_DISTANCE = TRAILING_DISTANCE
     BE_TRIGGER = BE_TRIGGER
     BE_BUFFER = BE_BUFFER
+    DEFAULT_PARAMS = DEFAULT_PARAMS
+    ENTRY_ZONES = ENTRY_ZONES
+    KILL_SWITCH = KILL_SWITCH
     USE_ADAPTIVE_TP = USE_ADAPTIVE_TP
     USE_ADAPTIVE_TRAILING = USE_ADAPTIVE_TRAILING
     USE_DYNAMIC_LEVERAGE = USE_DYNAMIC_LEVERAGE
