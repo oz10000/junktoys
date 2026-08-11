@@ -1,34 +1,66 @@
 # ============================================================
-# portfolio_manager.py — VERSIÓN CON APALANCAMIENTO DINÁMICO
+# portfolio_manager.py — VERSIÓN ORIGINAL
+# ============================================================
+# Este archivo solo existe en el repositorio junktoys.
+# Ultra‑Viola‑et‑massive‑toy no tiene este módulo.
 # ============================================================
 
-# ... (todo el código existente se mantiene)
-
-# ----- NUEVA FUNCIÓN AUXILIAR -----
-
-def _get_dynamic_leverage(symbol, atr_pct, volatility, profile='moderate'):
-    max_leverage = 1.0 / (atr_pct * LEVERAGE_SAFETY_MULT) if atr_pct > 0 else 10.0
-    max_leverage = min(max_leverage, 10.0)
-    if volatility > 0.03:
-        max_leverage *= 0.8
-    elif volatility < 0.01:
-        max_leverage *= 1.2
-    profile_factor = LEVERAGE_PROFILE.get(profile, 0.7)
-    recommended = max_leverage * profile_factor
-    recommended = max(1.0, min(10.0, recommended))
-    return {'max_safe': round(max_leverage, 1), 'recommended': round(recommended, 1)}
-
-# ----- MODIFICACIÓN EN calculate_leverage() -----
+from config import LEVERAGE, RISK_PER_TRADE
 
 class PortfolioManager:
-    # ... (resto de la clase)
+    """
+    Gestión de cartera y capital.
+    Proporciona el apalancamiento y el riesgo por operación.
+    """
 
-    def calculate_leverage(self, symbol, atr_pct=None, volatility=None, profile=None):
-        if USE_DYNAMIC_LEVERAGE and atr_pct is not None:
-            if profile is None:
-                profile = DEFAULT_LEVERAGE_PROFILE
-            result = _get_dynamic_leverage(symbol, atr_pct, volatility, profile)
-            self._current_leverage_info = result
-            return result['recommended']
-        else:
-            return LEVERAGE
+    def __init__(self, initial_capital: float = 10000.0):
+        self.capital = initial_capital
+        self.equity = initial_capital
+        self.trades = []
+        self.current_positions = []
+
+    def calculate_leverage(self, symbol: str = None) -> int:
+        """
+        Retorna el apalancamiento fijo definido en la configuración.
+        """
+        return LEVERAGE
+
+    def calculate_risk_per_trade(self) -> float:
+        """
+        Retorna el riesgo fijo por operación (porcentaje del capital).
+        """
+        return RISK_PER_TRADE
+
+    def update_capital(self, pnl: float) -> None:
+        """
+        Actualiza el capital tras cerrar una operación.
+        """
+        self.capital += pnl
+        self.equity = self.capital
+
+    def add_trade(self, trade: dict) -> None:
+        """
+        Registra un trade cerrado en el historial.
+        """
+        self.trades.append(trade)
+
+    def get_equity(self) -> float:
+        """
+        Retorna el equity actual (capital + ganancias no realizadas).
+        """
+        return self.equity
+
+    def get_capital(self) -> float:
+        """
+        Retorna el capital disponible.
+        """
+        return self.capital
+
+    def reset(self) -> None:
+        """
+        Reinicia el gestor (para backtesting).
+        """
+        self.capital = 10000.0
+        self.equity = 10000.0
+        self.trades = []
+        self.current_positions = []
