@@ -1,361 +1,193 @@
 # data_engine.py
-import ccxt
-import pandas as pd
-import numpy as np
 import os
 import time
-import pickle
-import hashlib
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-from config import (
-    EXCHANGE_PRIORITY, EXCHANGE_CONFIGS, FALLBACK_SYMBOLS,
-    CACHE_DIR, OHLCV_DIR, TIMEFRAME, LOOKBACK_DAYS,
-    CERTIFICATION_CRITERIA
-)
+import pandas as pd
+import ccxt
+from typing import Optional, List
 
+# Importamos la clase CONFIG (contiene todo)
+from config import CONFIG
+
+# Configurar logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class DataEngine:
-    """Motor de datos con caché, validación de integridad y certificación de activos."""
 
-    def __init__(self, exchanges=None):
-        os.makedirs(OHLCV_DIR, exist_ok=True)
-        os.makedirs(CACHE_DIR, exist_ok=True)
+class DataEngine:
+    """
+    Motor de datos con múltiples exchanges, caché y failover.
+    Todos los parámetros se obtienen de CONFIG.
+    """
+
+    def __init__(self):
+        # Usamos CONFIG para todo
+        self.cache_dir = CONFIG.CACHE_DIR
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self.data_dir = CONFIG.DATA_DIR
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.logs_dir = CONFIG.LOGS_DIR
+        os.makedirs(self.logs_dir, exist_ok=True)
 
         self.exchanges = {}
-        self.exchange_status = {}
-        self.symbol_maps = {}
+        self.primary = None
+        self._connect_exchanges()
 
-        if exchanges is None:
-            exchanges = EXCHANGE_PRIORITY
+    def _connect_exchanges(self):
+        """Conecta a los exchanges en orden de prioridad."""
+        for ex_id in CONFIG.EXCHANGE_PRIORITY:
+            try:
+                ex_class = getattr(ccxt, ex_id)
+                exchange = ex_class({
+                    'enableRateLimit': True,
+                    'options': {'defaultType': 'spot'},
+                    'rateLimit': 1200,
+                })
+                exchange.load_markets()
+                self.exchanges[ex_id] = exchange
+                if self.primary is None:
+                    self.primary = ex_id
+                logger.info(f"✅ Conectado a {ex_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo conectar a {ex_id}: {e}")
 
-        for ex_id in exchanges:
-            self._connect_exchange(ex_id)
-
-        self.primary = self._get_primary_exchange()
-        self._cache = {}
-        self._cache_timestamps = {}
-        self._universe_cache = None
-        self._universe_by_exchange = {}
-        self._certified_assets = None
-        self._certified_assets_timestamp = None
+        if not self.exchanges:
+            raise RuntimeError("No se pudo conectar a ningún exchange")
 
         logger.info(f"✅ DataEngine listo. Primary: {self.primary}")
 
-    # ========================================================================
-    # CONEXIÓN Y GESTIÓN DE EXCHANGES
-    # ========================================================================
-    def _connect_exchange(self, ex_id):
-        for attempt in range(3):
+    def fetch_ohlcv(self, symbol: str, timeframe: str = None, limit: int = 300,
+                    use_cache: bool = True, exchange_id: str = None) -> Optional[pd.DataFrame]:
+        """
+        Obtiene velas OHLCV con caché y failover.
+        Si no se especifica timeframe, usa CONFIG.TIMEFRAME.
+        """
+        if timeframe is None:
+            timeframe = CONFIG.TIMEFRAME
+
+        cache_file = os.path.join(
+            self.cache_dir,
+            f"{symbol.replace('/', '_')}_{timeframe}_{limit}.parquet"
+        )
+
+        if use_cache and os.path.exists(cache_file):
             try:
-                ex_class = getattr(ccxt, ex_id)
-                options = {'enableRateLimit': True}
-
-                if ex_id == 'binance':
-                    options['options'] = {'defaultType': 'spot'}
-                elif ex_id == 'bybit':
-                    options['options'] = {'defaultType': 'linear'}
-                elif ex_id == 'okx':
-                    options['options'] = {'defaultType': 'swap'}
-                elif ex_id == 'mexc':
-                    options['options'] = {'defaultType': 'swap'}
-                elif ex_id == 'kucoin':
-                    options['options'] = {'defaultType': 'linear'}
-                elif ex_id == 'kraken':
-                    options['options'] = {'defaultType': 'spot'}
+                df = pd.read_parquet(cache_file)
+                if (pd.Timestamp.now() - df.index[-1]).total_seconds() < 3600:
+                    logger.debug(f"✅ Caché válido para {symbol}")
+                    return df
                 else:
-                    options['options'] = {'defaultType': 'spot'}
-
-                exchange = ex_class(options)
-                exchange.load_markets()
-                self.exchanges[ex_id] = exchange
-                self.exchange_status[ex_id] = 'connected'
-                self.symbol_maps[ex_id] = {m['symbol']: m for m in exchange.markets.values()}
-                logger.info(f"✅ Conectado a {ex_id}")
-                return
+                    logger.debug(f"⏳ Caché obsoleto para {symbol}, descargando...")
             except Exception as e:
-                logger.warning(f"Intento {attempt+1}/3 para {ex_id} falló: {e}")
-                time.sleep(2)
+                logger.warning(f"⚠️ Error leyendo caché de {symbol}: {e}")
 
-        self.exchanges[ex_id] = None
-        self.exchange_status[ex_id] = 'failed'
-        logger.error(f"❌ No se pudo conectar a {ex_id}")
+        # Si se especifica un exchange concreto, usarlo
+        if exchange_id:
+            exchanges_to_try = {exchange_id: self.exchanges.get(exchange_id)}
+            if not exchanges_to_try[exchange_id]:
+                logger.error(f"❌ Exchange {exchange_id} no conectado")
+                return None
+        else:
+            exchanges_to_try = self.exchanges
 
-    def _get_primary_exchange(self):
-        for ex_id in EXCHANGE_PRIORITY:
-            if self.exchanges.get(ex_id) is not None:
-                return ex_id
+        for ex_id, exchange in exchanges_to_try.items():
+            for attempt in range(3):
+                try:
+                    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+                    if not ohlcv:
+                        logger.warning(f"⚠️ No se obtuvieron velas para {symbol} desde {ex_id}")
+                        continue
+
+                    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                    df.set_index('timestamp', inplace=True)
+                    df.sort_index(inplace=True)
+
+                    if use_cache:
+                        try:
+                            df.to_parquet(cache_file)
+                            logger.debug(f"💾 Caché guardado para {symbol}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ No se pudo guardar caché de {symbol}: {e}")
+
+                    logger.info(f"✅ {len(df)} velas para {symbol} desde {ex_id}")
+                    return df
+
+                except ccxt.RateLimitExceeded:
+                    wait = (attempt + 1) * 2
+                    logger.warning(f"⏳ Rate limit en {ex_id} (intento {attempt+1}/3). Esperando {wait}s...")
+                    time.sleep(wait)
+
+                except ccxt.BadSymbol:
+                    logger.warning(f"❌ Símbolo {symbol} no existe en {ex_id}")
+                    break
+
+                except Exception as e:
+                    logger.error(f"❌ Error en {ex_id} (intento {attempt+1}/3): {e}")
+                    time.sleep(1)
+
+            logger.warning(f"⚠️ {ex_id} falló para {symbol}, probando siguiente exchange...")
+
+        logger.error(f"❌ No se pudo descargar {symbol} después de todos los intentos")
         return None
 
-    def get_available_exchanges(self):
-        return [ex_id for ex_id, ex in self.exchanges.items() if ex is not None]
+    def fetch_historical(self, symbol: str, days: int = 180, timeframe: str = None) -> Optional[pd.DataFrame]:
+        """
+        Descarga datos históricos de múltiples velas.
+        """
+        if timeframe is None:
+            timeframe = CONFIG.TIMEFRAME
+        # Aproximación: 5m → 12*24 = 288 velas/día
+        limit = days * 288
+        return self.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
 
-    # ========================================================================
-    # CERTIFICACIÓN DE ACTIVOS
-    # ========================================================================
-    def get_certified_assets(self, force_refresh=False):
-        if not force_refresh and self._certified_assets is not None:
-            if self._certified_assets_timestamp and (datetime.now() - self._certified_assets_timestamp).seconds < 3600:
-                logger.info(f"📦 Usando caché de certificación: {len(self._certified_assets)} activos")
-                return self._certified_assets
-
-        all_symbols = self.get_common_pairs(max_pairs=200, force_refresh=force_refresh)
-        logger.info(f"🔍 Evaluando {len(all_symbols)} activos para certificación...")
+    def get_certified_assets(self, symbols: Optional[List[str]] = None) -> List[str]:
+        """Certifica qué activos existen en el exchange primario."""
+        if symbols is None:
+            symbols = CONFIG.SYMBOLS
 
         certified = []
-        evaluated = 0
-        passed = 0
+        exchange = self.exchanges.get(self.primary)
+        if exchange is None:
+            logger.error("❌ No hay exchange primario para certificar activos")
+            return certified
 
-        from backtester import Backtester
-        from config import DEFAULT_PARAMS, INITIAL_CAPITAL
+        markets = exchange.load_markets()
+        for sym in symbols:
+            if '/' not in sym:
+                sym = f"{sym}/USDT"
+            if sym in markets:
+                certified.append(sym)
+                logger.debug(f"✅ Activo certificado: {sym}")
+            else:
+                logger.warning(f"⚠️ Activo no encontrado: {sym}")
 
-        for sym in all_symbols[:50]:
-            try:
-                logger.info(f"📊 Certificando {sym}...")
-                df = self.fetch_historical(sym, days=180)
-                if df is None or df.empty:
-                    logger.warning(f"⚠️ {sym}: sin datos históricos")
-                    continue
-
-                bt = Backtester({sym: df}, {'__global__': DEFAULT_PARAMS}, INITIAL_CAPITAL)
-                _, trades, _ = bt.run()
-                metrics = bt.calculate_metrics()
-
-                win_rate = metrics.get('win_rate', 0)
-                profit_factor = metrics.get('profit_factor', 0)
-                max_dd = metrics.get('max_dd', 0)
-                n_trades = metrics.get('n_trades', 0)
-
-                evaluated += 1
-
-                criteria_ok = (
-                    win_rate >= CERTIFICATION_CRITERIA['min_win_rate'] and
-                    profit_factor >= CERTIFICATION_CRITERIA['min_profit_factor'] and
-                    abs(max_dd) <= CERTIFICATION_CRITERIA['max_drawdown'] and
-                    n_trades >= CERTIFICATION_CRITERIA['min_trades']
-                )
-
-                if criteria_ok:
-                    certified.append(sym)
-                    passed += 1
-                    logger.info(f"✅ {sym} CERTIFICADO (WR: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%}, Trades: {n_trades})")
-                else:
-                    logger.info(f"❌ {sym} rechazado (WR: {win_rate:.2%}, PF: {profit_factor:.2f}, DD: {max_dd:.2%}, Trades: {n_trades})")
-
-            except Exception as e:
-                logger.warning(f"Error certificando {sym}: {e}")
-
-        logger.info(f"📊 Certificación completada: {passed}/{evaluated} activos aprobados")
-
+        # Si no hay certificados, usar fallback
         if not certified:
-            logger.warning("⚠️ No se encontraron activos certificados. Usando FALLBACK_SYMBOLS.")
-            certified = FALLBACK_SYMBOLS[:20]
-
-        self._certified_assets = certified
-        self._certified_assets_timestamp = datetime.now()
-        logger.info(f"✅ {len(certified)} activos en el universo operativo")
+            logger.warning("⚠️ No se certificaron activos. Usando FALLBACK_SYMBOLS.")
+            certified = CONFIG.FALLBACK_SYMBOLS[:10]
         return certified
 
-    # ========================================================================
-    # OBTENCIÓN DE PARES COMUNES
-    # ========================================================================
-    def get_common_pairs(self, min_volume_usd=0, max_pairs=500, force_refresh=False):
-        if not force_refresh and self._universe_cache is not None:
-            return self._universe_cache
-
-        all_pairs = {}
-        pair_exchanges = {}
-
+    def get_common_symbols(self, min_exchanges: int = 2) -> List[str]:
+        """Obtiene el universo de símbolos comunes a múltiples exchanges."""
+        symbol_sets = []
         for ex_id, exchange in self.exchanges.items():
-            if exchange is None:
-                continue
-
             try:
-                logger.info(f"📊 Obteniendo pares de {ex_id}...")
                 markets = exchange.load_markets()
-                pairs = []
-                ex_type = EXCHANGE_CONFIGS.get(ex_id, {}).get('type', 'spot')
-
-                for symbol, market in markets.items():
-                    if not symbol.endswith('/USDT') and not symbol.endswith('USDT'):
-                        continue
-                    if ex_type == 'spot' and not market.get('spot', False):
-                        continue
-                    if ex_type == 'linear' and not market.get('linear', False):
-                        continue
-                    if ex_type == 'swap' and not market.get('swap', False):
-                        continue
-                    pairs.append(symbol)
-
-                if min_volume_usd > 0:
-                    try:
-                        tickers = exchange.fetch_tickers()
-                        filtered = []
-                        for sym in pairs:
-                            ticker = tickers.get(sym)
-                            if ticker:
-                                vol = ticker.get('quoteVolume', 0) or ticker.get('turnover', 0)
-                                if vol >= min_volume_usd:
-                                    filtered.append(sym)
-                        pairs = filtered
-                    except Exception as e:
-                        logger.warning(f"Error filtrando volumen en {ex_id}: {e}")
-
-                all_pairs[ex_id] = set(pairs)
-                for sym in pairs:
-                    if sym not in pair_exchanges:
-                        pair_exchanges[sym] = []
-                    pair_exchanges[sym].append(ex_id)
-
-                logger.info(f"✅ {ex_id}: {len(pairs)} pares USDT")
-
+                usdt_pairs = [s for s in markets if s.endswith('/USDT')]
+                symbol_sets.append(set(usdt_pairs))
+                logger.info(f"✅ {ex_id}: {len(usdt_pairs)} pares USDT")
             except Exception as e:
-                logger.warning(f"Error obteniendo pares de {ex_id}: {e}")
+                logger.warning(f"⚠️ Error obteniendo pares de {ex_id}: {e}")
 
-        if all_pairs:
-            common = set.intersection(*all_pairs.values()) if len(all_pairs) > 1 else set(list(all_pairs.values())[0])
-            common = sorted(list(common))[:max_pairs]
-        else:
-            common = []
+        if not symbol_sets:
+            logger.warning("⚠️ No se obtuvieron pares de ningún exchange")
+            return CONFIG.SYMBOLS
 
-        if len(common) < 5 and 'kraken' in all_pairs:
-            logger.warning("⚠️ Intersección pequeña. Usando pares de Kraken.")
-            common = sorted(list(all_pairs.get('kraken', set())))[:max_pairs]
-
-        if not common:
-            logger.warning("⚠️ Intersección vacía. Usando FALLBACK_SYMBOLS.")
-            common = FALLBACK_SYMBOLS[:max_pairs]
-
-        self._universe_by_exchange = {ex_id: sorted(list(pairs & set(common)))
-                                      for ex_id, pairs in all_pairs.items()}
-        self._universe_cache = common
+        common = set.intersection(*symbol_sets)
         logger.info(f"✅ Universo consolidado: {len(common)} pares comunes")
-        return common
+        return sorted(common)
 
-    def _get_best_exchange_for_symbol(self, symbol):
-        if symbol in self._universe_by_exchange:
-            for ex_id in EXCHANGE_PRIORITY:
-                if symbol in self._universe_by_exchange.get(ex_id, []):
-                    return ex_id
-        return self.primary
-
-    # ========================================================================
-    # DESCARGA DE DATOS CON CACHÉ Y CHECKSUM
-    # ========================================================================
-    def fetch_ohlcv(self, symbol, timeframe=TIMEFRAME, limit=300, exchange_id=None, force_refresh=False):
-        ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
-        exchange = self.exchanges.get(ex_id)
-
-        if exchange is None:
-            for alt_id in EXCHANGE_PRIORITY:
-                if self.exchanges.get(alt_id) is not None:
-                    exchange = self.exchanges[alt_id]
-                    ex_id = alt_id
-                    break
-            if exchange is None:
-                logger.error(f"No hay exchange disponible para {symbol}")
-                return None
-
-        cache_key = hashlib.md5(f"{symbol}_{timeframe}_{limit}_{ex_id}".encode()).hexdigest()
-        cache_path = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
-        meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
-
-        if not force_refresh and os.path.exists(cache_path) and os.path.exists(meta_path):
-            try:
-                with open(meta_path, 'r') as f:
-                    stored_checksum = f.read().strip()
-                df = pd.read_pickle(cache_path)  # Usamos pickle para compatibilidad
-                if not df.empty:
-                    current_checksum = self._compute_checksum(df)
-                    if current_checksum == stored_checksum:
-                        return df
-                    else:
-                        logger.warning(f"⚠️ Checksum incorrecto para {symbol}. Re-descargando.")
-            except Exception as e:
-                logger.warning(f"Error leyendo caché {symbol}: {e}")
-
-        try:
-            markets = exchange.load_markets()
-            actual_symbol = symbol
-            if symbol not in markets:
-                for sym, market in markets.items():
-                    if sym == symbol or market.get('id') == symbol:
-                        actual_symbol = sym
-                        break
-
-            ohlcv = exchange.fetch_ohlcv(actual_symbol, timeframe, limit=limit)
-            if not ohlcv:
-                return None
-
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-
-            # Guardar con checksum
-            checksum = self._compute_checksum(df)
-            with open(cache_path, 'wb') as f:
-                pickle.dump(df, f)
-            with open(meta_path, 'w') as f:
-                f.write(checksum)
-
-            logger.info(f"✅ {len(df)} velas para {symbol} desde {ex_id}")
-            return df
-
-        except Exception as e:
-            logger.warning(f"Error en {ex_id} para {symbol}: {e}")
-            return None
-
-    def fetch_historical(self, symbol, timeframe=TIMEFRAME, days=LOOKBACK_DAYS, exchange_id=None):
-        ex_id = exchange_id or self._get_best_exchange_for_symbol(symbol)
-        exchange = self.exchanges.get(ex_id)
-        if exchange is None:
-            return None
-
-        if timeframe.endswith('m'):
-            minutes = int(timeframe[:-1])
-            candles_per_day = 1440 // minutes
-        elif timeframe.endswith('h'):
-            hours = int(timeframe[:-1])
-            candles_per_day = 24 // hours
-        else:
-            candles_per_day = 288
-
-        limit = days * candles_per_day + 100
-
-        try:
-            since = exchange.parse8601((datetime.now() - timedelta(days=days)).isoformat())
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-            if not ohlcv:
-                return None
-
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
-
-            cutoff = datetime.now() - timedelta(days=days)
-            df = df[df.index >= cutoff]
-            return df
-
-        except Exception as e:
-            logger.error(f"Error en histórico de {symbol}: {e}")
-            return None
-
-    # ========================================================================
-    # CHECKSUM
-    # ========================================================================
-    def _compute_checksum(self, df: pd.DataFrame) -> str:
-        """Calcula checksum SHA256 de un DataFrame para verificación de integridad."""
-        return hashlib.sha256(df.to_csv(index=False).encode()).hexdigest()
-
-    def clear_cache(self):
-        self._cache.clear()
-        self._cache_timestamps.clear()
-        for f in os.listdir(CACHE_DIR):
-            try:
-                os.remove(os.path.join(CACHE_DIR, f))
-            except:
-                pass
-        logger.info("🧹 Caché limpiada")
+    def get_available_exchanges(self) -> List[str]:
+        """Retorna la lista de exchanges conectados."""
+        return list(self.exchanges.keys())
