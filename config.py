@@ -1,8 +1,8 @@
 # ============================================================
-# CONFIGURACIÓN — JUNK TOYS v6.2.1 (CORREGIDA)
+# CONFIGURACIÓN — JUNK TOYS v6.2.1 (DEFINITIVA)
 # ============================================================
 
-# --- Constantes sueltas (para import directo) ---
+# --- Constantes básicas (para import directo) ---
 TIMEFRAME = '5m'
 INITIAL_CAPITAL = 10000.0
 MAX_HOLD = 120
@@ -14,7 +14,7 @@ CACHE_DIR = 'cache'
 DATA_DIR = 'data'
 LOGS_DIR = 'logs'
 
-# --- Universo de activos ---
+# --- Universo de activos (completo) ---
 SYMBOLS = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
     'ADA/USDT', 'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'MATIC/USDT',
@@ -28,7 +28,7 @@ FALLBACK_SYMBOLS = SYMBOLS + [
     'DOGE/USDT', 'BCH/USDT'
 ]
 
-# --- Prioridad de exchanges (para fallback) ---
+# --- Prioridad de exchanges (fallback) ---
 EXCHANGE_PRIORITY = ['binance', 'okx', 'kucoin', 'mexc', 'kraken', 'bybit']
 
 # --- Parámetros de la estrategia (originales) ---
