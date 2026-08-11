@@ -1,205 +1,168 @@
-# config.py
-import pytz
-import numpy as np
-from datetime import timedelta
+# ============================================================
+# CONFIGURACIÓN — JUNK TOYS v6.2.1 (CORREGIDA)
+# ============================================================
 
-# ============================================================
-# VERSIÓN
-# ============================================================
-VERSION = "6.2.1"
-PROJECT_NAME = "Junk Toys v6.2.1 — Estabilización"
-
-# ============================================================
-# DATOS Y TIMEFRAMES
-# ============================================================
+# --- Constantes globales (para import directo) ---
 TIMEFRAME = '5m'
-TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d']
-PRIMARY_TF = '5m'
-LOOKBACK_DAYS = 365
 INITIAL_CAPITAL = 10000.0
-COMMISSION = 0.0004
-SLIPPAGE = 0.0005
-
-TIMEZONE = pytz.timezone('America/Argentina/Buenos_Aires')
-
-# ============================================================
-# EXCHANGES — DEFINIDO PARA COMPATIBILIDAD CON STREAMLIT
-# ============================================================
-EXCHANGES = {
-    'okx': {'type': 'swap', 'enabled': True},
-    'kucoin': {'type': 'linear', 'enabled': True},
-    'mexc': {'type': 'swap', 'enabled': True},
-    'kraken': {'type': 'spot', 'enabled': True},
-    'binance': {'type': 'spot', 'enabled': True},
-    'bybit': {'type': 'linear', 'enabled': True},
-}
-
-EXCHANGE_PRIORITY = ['okx', 'kucoin', 'mexc', 'kraken', 'binance', 'bybit']
-EXCHANGE_CONFIGS = {
-    'okx': {'type': 'swap', 'symbol_format': '{base}-{quote}-SWAP'},
-    'kucoin': {'type': 'linear', 'symbol_format': '{base}{quote}M'},
-    'mexc': {'type': 'swap', 'symbol_format': '{base}_{quote}'},
-    'kraken': {'type': 'spot', 'symbol_format': '{base}/{quote}'},
-    'binance': {'type': 'spot', 'symbol_format': '{base}/{quote}'},
-    'bybit': {'type': 'linear', 'symbol_format': '{base}/{quote}'},
-}
-
-FALLBACK_SYMBOLS = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XRP/USDT', 'ADA/USDT',
-    'DOGE/USDT', 'AVAX/USDT', 'DOT/USDT', 'LINK/USDT', 'MATIC/USDT',
-    'UNI/USDT', 'ATOM/USDT', 'LTC/USDT', 'BCH/USDT', 'NEAR/USDT',
-    'ALGO/USDT', 'VET/USDT', 'ICP/USDT', 'FTM/USDT', 'ARB/USDT',
-]
-
-# ============================================================
-# DIRECTORIOS DE CACHÉ
-# ============================================================
-CACHE_DIR = 'data/cache'
-OHLCV_DIR = 'data/ohlcv'
-RESULTS_DIR = 'data/results'
-WISE_DATA_DIR = 'data/wise'
-
-# ============================================================
-# FILTRO HORARIO (Argentina)
-# ============================================================
-HOUR_FILTER_START = 10
-HOUR_FILTER_END = 17
-USE_HOUR_FILTER = True
-
-# ============================================================
-# PARÁMETROS POR DEFECTO
-# ============================================================
-DEFAULT_PARAMS = {
-    'min_score': 0.30,
-    'adx_threshold': 22,
-    'ker_threshold': 0.42,
-    'tp_mult': 2.5,
-    'sl_mult': 1.0,
-    'trailing_distance': 0.008,
-    'trailing_activation': 0.012,
-    'trailing_callback': 0.003,
-    'break_even_trigger': 0.008,
-    'break_even_buffer': 0.002,
-    'max_hold_minutes': 120,
-    'rotation_confidence_gap': 0.15,
-}
-
-# ============================================================
-# PARÁMETROS POR ACTIVO (para compatibilidad con scripts legacy)
-# ============================================================
-ASSET_PARAMS = {}
-
-# ============================================================
-# CRITERIOS DE CERTIFICACIÓN
-# ============================================================
-CERTIFICATION_CRITERIA = {
-    'min_win_rate': 0.45,
-    'min_profit_factor': 1.05,
-    'max_drawdown': 0.30,
-    'min_trades': 10,
-}
-
-# ============================================================
-# UNIVERSE — SE LLENA AUTOMÁTICAMENTE POR DATA_ENGINE
-# ============================================================
-UNIVERSE = []
-UNIVERSE_BY_EXCHANGE = {}
-MAX_LEVERAGE_BY_ASSET = {}  # <--- AHORA DEFINIDO
-
-# ============================================================
-# PESOS DEL SCORING
-# ============================================================
-SCORING_WEIGHTS = {
-    'regime': 0.15,
-    'trend_quality': 0.15,
-    'volatility': 0.10,
-    'historical_winrate': 0.10,
-    'historical_profit_factor': 0.08,
-    'expectancy': 0.08,
-    'risk': 0.08,
-    'statistical_quality': 0.06,
-    'microstructure': 0.06,
-    'support_resistance': 0.06,
-    'liquidity': 0.04,
-    'correlation': 0.04,
-}
-
-# ============================================================
-# ZONAS DE ENTRADA
-# ============================================================
-ENTRY_ZONES = {
-    'A': {'pct': 0.002, 'desc': 'Muy cercana', 'aggressiveness': 0.3, 'color': '#4CAF50'},
-    'B': {'pct': 0.010, 'desc': 'Moderada', 'aggressiveness': 0.6, 'color': '#FF9800'},
-    'C': {'pct': 0.025, 'desc': 'Agresiva', 'aggressiveness': 0.9, 'color': '#F44336'},
-}
-
-# ============================================================
-# RÉGIMENES
-# ============================================================
-REGIME_SCORES = {
-    'Expansión': 1.0,
-    'Tendencia Fuerte': 0.9,
-    'Tendencia': 0.7,
-    'Normal': 0.5,
-    'Chop': 0.2,
-}
-
-# ============================================================
-# OPTIMIZACIÓN
-# ============================================================
-OPTIMIZATION_ITERATIONS = 100
-WALK_FORWARD_SPLITS = 5
-MONTE_CARLO_SIMULATIONS = 1000
-BAYESIAN_INITIAL_POINTS = 20
-BAYESIAN_N_CALLS = 50
-
-# ============================================================
-# RIESGO
-# ============================================================
-MAX_LEVERAGE_GLOBAL = 10
+MAX_HOLD = 120
 RISK_PER_TRADE = 0.02
-MAX_POSITIONS = 3
-MAX_DAILY_LOSS_PCT = 0.08
-MIN_RISK_REWARD_RATIO = 1.5
+LEVERAGE = 5                      # <--- CLAVE: añadido
 
-# ============================================================
-# SOPORTES Y RESISTENCIAS
-# ============================================================
-SR_WINDOW = 20
-SR_VOLUME_THRESHOLD = 1.5
-SR_CLUSTER_TOLERANCE = 0.005
-SR_MAX_LEVELS = 10
+# --- Directorios ---
+CACHE_DIR = 'cache'
+DATA_DIR = 'data'
+LOGS_DIR = 'logs'
 
-# ============================================================
-# AMPLITUD
-# ============================================================
-AMPLITUDE_LOOKBACK = 100
-AMPLITUDE_BUCKETS = 10
-
-# ============================================================
-# EDGE
-# ============================================================
-EDGE_THRESHOLDS = {
-    'maximo': 0.70,
-    'medio': 0.50,
-    'minimo': 0.30,
-}
-
-# ============================================================
-# PROBABILIDAD
-# ============================================================
-MIN_PROBABILITY = 0.55
-MIN_CONFIDENCE = 0.60
-
-# ============================================================
-# WISE
-# ============================================================
-WISE_SUPPORTED_CURRENCIES = [
-    'USD', 'EUR', 'GBP', 'CHF', 'AUD', 'CAD', 'NZD', 'SGD', 'JPY',
-    'BRL', 'MXN', 'COP', 'ARS', 'CLP', 'PEN', 'TRY', 'INR', 'CNY'
+# --- Universo de activos (completo) ---
+SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
+    'ADA/USDT', 'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'MATIC/USDT',
+    'VET/USDT', 'UNI/USDT', 'ATOM/USDT', 'FIL/USDT', 'ICP/USDT',
+    'NEAR/USDT', 'APT/USDT'
 ]
 
+FALLBACK_SYMBOLS = SYMBOLS + [
+    'ARB/USDT', 'OP/USDT', 'INJ/USDT', 'SEI/USDT', 'SUI/USDT',
+    'APE/USDT', 'FTM/USDT', 'ALGO/USDT', 'ETC/USDT', 'LTC/USDT',
+    'DOGE/USDT', 'BCH/USDT'
+]
+
+# --- Prioridad de exchanges (fallback) ---
+EXCHANGE_PRIORITY = ['binance', 'okx', 'kucoin', 'mexc', 'kraken', 'bybit']
+
+# --- Parámetros de la estrategia (originales) ---
+MIN_SCORE = 0.35
+ADX_THRESHOLD = 22
+KER_THRESHOLD = 0.42
+SL_MULT = 1.0
+TP_MULT = 2.5
+TP_TREND_BONUS = 1.1
+TRAILING_ACTIVATION = 0.012
+TRAILING_DISTANCE = 0.008
+BE_TRIGGER = 0.008
+BE_BUFFER = 0.002
+
 # ============================================================
-# KILL SWITCH
+# PARÁMETROS AJUSTADOS NUEVOS (DeepSync) — desactivados por defecto
 # ============================================================
-KILL_SWITCH = False
+USE_ADAPTIVE_TP = False
+USE_ADAPTIVE_TRAILING = False
+USE_DYNAMIC_LEVERAGE = False
+
+# --- Diccionarios para parámetros por activo (se usan solo si las banderas están activas) ---
+ASSET_TP_MULT = {
+    'BTC/USDT': 2.8, 'ETH/USDT': 3.0, 'SOL/USDT': 3.2,
+    'XRP/USDT': 2.6, 'ADA/USDT': 3.1, 'DOT/USDT': 3.1,
+    'LINK/USDT': 3.0, 'AVAX/USDT': 3.4, 'MATIC/USDT': 3.1,
+    'VET/USDT': 3.2, 'UNI/USDT': 2.9, 'ATOM/USDT': 3.0,
+    'FIL/USDT': 3.3, 'ICP/USDT': 3.5, 'NEAR/USDT': 3.4,
+    'APT/USDT': 3.6, 'ARB/USDT': 3.2, 'OP/USDT': 3.3,
+    'INJ/USDT': 3.5, 'SEI/USDT': 3.4, 'SUI/USDT': 3.5,
+    'APE/USDT': 3.3, 'FTM/USDT': 3.2, 'ALGO/USDT': 3.0,
+    'ETC/USDT': 3.1, 'LTC/USDT': 2.8, 'DOGE/USDT': 3.0,
+    'BCH/USDT': 3.0,
+}
+DEFAULT_TP_MULT = 3.0
+
+ASSET_TRAILING_DIST = {
+    'BTC/USDT': 1.2, 'ETH/USDT': 1.4, 'SOL/USDT': 1.6,
+    'XRP/USDT': 1.1, 'ADA/USDT': 1.5, 'DOT/USDT': 1.5,
+    'LINK/USDT': 1.4, 'AVAX/USDT': 1.7, 'MATIC/USDT': 1.5,
+    'VET/USDT': 1.6, 'UNI/USDT': 1.3, 'ATOM/USDT': 1.5,
+    'FIL/USDT': 1.7, 'ICP/USDT': 1.8, 'NEAR/USDT': 1.7,
+    'APT/USDT': 1.8, 'ARB/USDT': 1.6, 'OP/USDT': 1.7,
+    'INJ/USDT': 1.8, 'SEI/USDT': 1.7, 'SUI/USDT': 1.8,
+    'APE/USDT': 1.7, 'FTM/USDT': 1.6, 'ALGO/USDT': 1.5,
+    'ETC/USDT': 1.5, 'LTC/USDT': 1.3, 'DOGE/USDT': 1.5,
+    'BCH/USDT': 1.5,
+}
+DEFAULT_TRAILING_DIST = 1.5
+
+ASSET_TRAILING_ACT = {
+    'BTC/USDT': 1.8, 'ETH/USDT': 2.0, 'SOL/USDT': 2.4,
+    'XRP/USDT': 1.6, 'ADA/USDT': 2.2, 'DOT/USDT': 2.3,
+    'LINK/USDT': 2.1, 'AVAX/USDT': 2.6, 'MATIC/USDT': 2.2,
+    'VET/USDT': 2.4, 'UNI/USDT': 2.0, 'ATOM/USDT': 2.2,
+    'FIL/USDT': 2.5, 'ICP/USDT': 2.7, 'NEAR/USDT': 2.6,
+    'APT/USDT': 2.8, 'ARB/USDT': 2.4, 'OP/USDT': 2.5,
+    'INJ/USDT': 2.7, 'SEI/USDT': 2.6, 'SUI/USDT': 2.7,
+    'APE/USDT': 2.5, 'FTM/USDT': 2.4, 'ALGO/USDT': 2.2,
+    'ETC/USDT': 2.2, 'LTC/USDT': 1.9, 'DOGE/USDT': 2.2,
+    'BCH/USDT': 2.2,
+}
+DEFAULT_TRAILING_ACT = 2.2
+
+REGIME_TRAILING_FACTOR = {
+    'Tendencia Fuerte': 0.9, 'Expansión': 0.95,
+    'Tendencia': 1.0, 'Normal': 1.0, 'Chop': 1.6,
+}
+REGIME_TP_FACTOR = {
+    'Tendencia Fuerte': 0.9, 'Expansión': 0.9,
+    'Tendencia': 1.0, 'Normal': 1.0, 'Chop': 1.15,
+}
+
+ADX_TRAILING_FACTOR = {
+    (0, 20): 1.15, (20, 30): 1.0, (30, 40): 0.92, (40, 100): 0.85,
+}
+VOLATILITY_TRAILING_FACTOR = {'low': 0.9, 'medium': 1.0, 'high': 1.15}
+
+LEVERAGE_PROFILE = {'conservative': 0.5, 'moderate': 0.7, 'aggressive': 1.0}
+DEFAULT_LEVERAGE_PROFILE = 'moderate'
+LEVERAGE_SAFETY_MULT = 3.0
+
+ASSET_DECIMALS = {
+    'BTC/USDT': 2, 'ETH/USDT': 2, 'BNB/USDT': 2, 'SOL/USDT': 2,
+    'XRP/USDT': 4, 'ADA/USDT': 4, 'DOT/USDT': 4, 'LINK/USDT': 4,
+    'AVAX/USDT': 2, 'MATIC/USDT': 4, 'VET/USDT': 6, 'UNI/USDT': 4,
+    'ATOM/USDT': 4, 'FIL/USDT': 4, 'ICP/USDT': 4, 'NEAR/USDT': 4,
+    'APT/USDT': 4, 'ARB/USDT': 4, 'OP/USDT': 4, 'INJ/USDT': 4,
+    'SEI/USDT': 4, 'SUI/USDT': 4, 'APE/USDT': 4, 'FTM/USDT': 4,
+    'ALGO/USDT': 4, 'ETC/USDT': 4, 'LTC/USDT': 2, 'DOGE/USDT': 4,
+    'BCH/USDT': 2,
+}
+DEFAULT_DECIMALS = 4
+
+# ============================================================
+# CLASE CONFIG (para importaciones con from config import CONFIG)
+# ============================================================
+class CONFIG:
+    TIMEFRAME = TIMEFRAME
+    INITIAL_CAPITAL = INITIAL_CAPITAL
+    MAX_HOLD = MAX_HOLD
+    RISK_PER_TRADE = RISK_PER_TRADE
+    LEVERAGE = LEVERAGE                     # <--- clave aquí también
+    CACHE_DIR = CACHE_DIR
+    DATA_DIR = DATA_DIR
+    LOGS_DIR = LOGS_DIR
+    SYMBOLS = SYMBOLS
+    FALLBACK_SYMBOLS = FALLBACK_SYMBOLS
+    EXCHANGE_PRIORITY = EXCHANGE_PRIORITY
+    MIN_SCORE = MIN_SCORE
+    ADX_THRESHOLD = ADX_THRESHOLD
+    KER_THRESHOLD = KER_THRESHOLD
+    SL_MULT = SL_MULT
+    TP_MULT = TP_MULT
+    TP_TREND_BONUS = TP_TREND_BONUS
+    TRAILING_ACTIVATION = TRAILING_ACTIVATION
+    TRAILING_DISTANCE = TRAILING_DISTANCE
+    BE_TRIGGER = BE_TRIGGER
+    BE_BUFFER = BE_BUFFER
+    USE_ADAPTIVE_TP = USE_ADAPTIVE_TP
+    USE_ADAPTIVE_TRAILING = USE_ADAPTIVE_TRAILING
+    USE_DYNAMIC_LEVERAGE = USE_DYNAMIC_LEVERAGE
+    ASSET_TP_MULT = ASSET_TP_MULT
+    DEFAULT_TP_MULT = DEFAULT_TP_MULT
+    ASSET_TRAILING_DIST = ASSET_TRAILING_DIST
+    DEFAULT_TRAILING_DIST = DEFAULT_TRAILING_DIST
+    ASSET_TRAILING_ACT = ASSET_TRAILING_ACT
+    DEFAULT_TRAILING_ACT = DEFAULT_TRAILING_ACT
+    REGIME_TRAILING_FACTOR = REGIME_TRAILING_FACTOR
+    REGIME_TP_FACTOR = REGIME_TP_FACTOR
+    ADX_TRAILING_FACTOR = ADX_TRAILING_FACTOR
+    VOLATILITY_TRAILING_FACTOR = VOLATILITY_TRAILING_FACTOR
+    LEVERAGE_PROFILE = LEVERAGE_PROFILE
+    DEFAULT_LEVERAGE_PROFILE = DEFAULT_LEVERAGE_PROFILE
+    LEVERAGE_SAFETY_MULT = LEVERAGE_SAFETY_MULT
+    ASSET_DECIMALS = ASSET_DECIMALS
+    DEFAULT_DECIMALS = DEFAULT_DECIMALS
