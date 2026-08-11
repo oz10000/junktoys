@@ -8,11 +8,11 @@ PROJECT_NAME = "🧸 Junk Toys"
 VERSION = "6.2.1"
 
 # ============================================================
-# ZONA HORARIA Y FILTROS (para utils.py)
+# ZONA HORARIA Y FILTROS
 # ============================================================
 TIMEZONE = 'America/Argentina/Buenos_Aires'
-HOUR_FILTER_START = 9   # 9 AM Argentina
-HOUR_FILTER_END = 18    # 6 PM Argentina
+HOUR_FILTER_START = 9
+HOUR_FILTER_END = 18
 
 # ============================================================
 # CONSTANTES PRINCIPALES
@@ -75,7 +75,7 @@ BE_TRIGGER = 0.008
 BE_BUFFER = 0.002
 
 # ============================================================
-# PARÁMETROS POR DEFECTO (para Signal y otros módulos)
+# PARÁMETROS POR DEFECTO (para Signal)
 # ============================================================
 DEFAULT_PARAMS = {
     'min_score': MIN_SCORE,
@@ -109,7 +109,13 @@ ENTRY_ZONES = {
 KILL_SWITCH = False
 
 # ============================================================
-# PARÁMETROS AJUSTADOS DEEPSYNC (opcionales)
+# AMPLITUD (para amplitude_analyzer.py)
+# ============================================================
+AMPLITUDE_LOOKBACK = 20
+AMPLITUDE_BUCKETS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+# ============================================================
+# PARÁMETROS DEEPSYNC (opcionales)
 # ============================================================
 USE_ADAPTIVE_TP = False
 USE_ADAPTIVE_TRAILING = False
@@ -188,7 +194,7 @@ ASSET_DECIMALS = {
 DEFAULT_DECIMALS = 4
 
 # ============================================================
-# CLASE CONFIG (para importaciones con from config import CONFIG)
+# CLASE CONFIG (para imports con from config import CONFIG)
 # ============================================================
 class CONFIG:
     PROJECT_NAME = PROJECT_NAME
@@ -221,6 +227,8 @@ class CONFIG:
     DEFAULT_PARAMS = DEFAULT_PARAMS
     ENTRY_ZONES = ENTRY_ZONES
     KILL_SWITCH = KILL_SWITCH
+    AMPLITUDE_LOOKBACK = AMPLITUDE_LOOKBACK
+    AMPLITUDE_BUCKETS = AMPLITUDE_BUCKETS
     USE_ADAPTIVE_TP = USE_ADAPTIVE_TP
     USE_ADAPTIVE_TRAILING = USE_ADAPTIVE_TRAILING
     USE_DYNAMIC_LEVERAGE = USE_DYNAMIC_LEVERAGE
