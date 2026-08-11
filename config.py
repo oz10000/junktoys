@@ -7,7 +7,7 @@ TIMEFRAME = '5m'
 INITIAL_CAPITAL = 10000.0
 MAX_HOLD = 120
 RISK_PER_TRADE = 0.02
-LEVERAGE = 5                      # <--- CLAVE: añadido
+LEVERAGE = 5
 
 # --- Directorios ---
 CACHE_DIR = 'cache'
@@ -131,7 +131,7 @@ class CONFIG:
     INITIAL_CAPITAL = INITIAL_CAPITAL
     MAX_HOLD = MAX_HOLD
     RISK_PER_TRADE = RISK_PER_TRADE
-    LEVERAGE = LEVERAGE                     # <--- clave aquí también
+    LEVERAGE = LEVERAGE
     CACHE_DIR = CACHE_DIR
     DATA_DIR = DATA_DIR
     LOGS_DIR = LOGS_DIR
